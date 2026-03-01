@@ -13,6 +13,7 @@ import {
 } from '@shared/openInApps';
 import { databaseService } from '../services/DatabaseService';
 import { buildExternalToolEnv } from '../utils/childProcessEnv';
+import { buildRemoteEditorUrl } from '../utils/remoteOpenIn';
 import { quoteShellArg } from '../utils/shellEscape';
 
 const UNKNOWN_VERSION = 'unknown';
@@ -280,17 +281,25 @@ export function registerAppIpc() {
 
             // Construct remote SSH URL or command based on the app
             // Security: Escape all user-controlled values to prevent command injection
-            const safeHost = encodeURIComponent(connection.host);
-            const safeTarget = encodeURIComponent(target);
-
             if (appId === 'vscode') {
-              // VS Code Remote SSH URL format: vscode://vscode-remote/ssh-remote+hostname/path
-              const remoteUrl = `vscode://vscode-remote/ssh-remote+${safeHost}${target}`;
+              // VS Code Remote SSH URL format:
+              // vscode://vscode-remote/ssh-remote+user%40hostname/path
+              const remoteUrl = buildRemoteEditorUrl(
+                'vscode',
+                connection.host,
+                connection.username,
+                target
+              );
               await shell.openExternal(remoteUrl);
               return { success: true };
             } else if (appId === 'cursor') {
               // Cursor uses its own URL scheme for remote SSH
-              const remoteUrl = `cursor://vscode-remote/ssh-remote+${safeHost}${target}`;
+              const remoteUrl = buildRemoteEditorUrl(
+                'cursor',
+                connection.host,
+                connection.username,
+                target
+              );
               await shell.openExternal(remoteUrl);
               return { success: true };
             } else if (appId === 'terminal' && platform === 'darwin') {
@@ -331,11 +340,21 @@ export function registerAppIpc() {
               );
               return { success: true };
             } else if (appId === 'ghostty') {
-              // Ghostty - execute SSH command directly
+              // Ghostty - execute SSH command directly.
+              // On macOS, prefer launching the app bundle so we don't depend on a CLI symlink.
               // Security: Use quoteShellArg to prevent command injection
               const sshCommand = `ssh ${quoteShellArg(connection.username)}@${quoteShellArg(connection.host)} -p ${quoteShellArg(String(connection.port))} -t "cd ${quoteShellArg(target)} && exec \\$SHELL"`;
               const quoted = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
-              const terminalCommand = `ghostty -e ${quoted(sshCommand)}`;
+              const escapedSshCommand = quoted(sshCommand);
+              const cliCommand = `ghostty -e ${escapedSshCommand}`;
+              const terminalCommand =
+                platform === 'darwin'
+                  ? [
+                      `open -b com.mitchellh.ghostty --args -e ${escapedSshCommand}`,
+                      `open -a "Ghostty" --args -e ${escapedSshCommand}`,
+                      cliCommand,
+                    ].join(' || ')
+                  : cliCommand;
 
               await new Promise<void>((resolve, reject) => {
                 exec(terminalCommand, { env: buildExternalToolEnv() }, (err) => {
