@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGhosttyRemoteExecArgs,
   buildRemoteEditorUrl,
+  buildRemoteSshCommand,
   buildRemoteSshAuthority,
+  buildRemoteTerminalShellCommand,
 } from '../remoteOpenIn';
 
 describe('buildRemoteSshAuthority', () => {
@@ -34,6 +36,17 @@ describe('buildRemoteEditorUrl', () => {
 });
 
 describe('buildGhosttyRemoteExecArgs', () => {
+  const expectedRemoteShellCommand =
+    `cd '/home/azureuser/pro/smv/.emdash/worktrees/task one' && ` +
+    '(if command -v infocmp >/dev/null 2>&1 && [ -n "${TERM:-}" ] && infocmp "${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && ' +
+    '(exec "${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)';
+
+  it('builds shared remote shell bootstrap command', () => {
+    expect(
+      buildRemoteTerminalShellCommand('/home/azureuser/pro/smv/.emdash/worktrees/task one')
+    ).toBe(expectedRemoteShellCommand);
+  });
+
   it('builds ssh argv tokens for Ghostty -e', () => {
     expect(
       buildGhosttyRemoteExecArgs({
@@ -52,7 +65,7 @@ describe('buildGhosttyRemoteExecArgs', () => {
       '-p',
       '22',
       '-t',
-      `cd '/home/azureuser/pro/smv/.emdash/worktrees/task one' && (if command -v infocmp >/dev/null 2>&1 && [ -n "\${TERM:-}" ] && infocmp "\${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
+      expectedRemoteShellCommand,
     ]);
   });
 
@@ -76,5 +89,29 @@ describe('buildGhosttyRemoteExecArgs', () => {
       '-t',
       `cd '/tmp/x' && (if command -v infocmp >/dev/null 2>&1 && [ -n "\${TERM:-}" ] && infocmp "\${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
     ]);
+  });
+
+  it('builds quoted ssh command string for shell-based launchers', () => {
+    expect(
+      buildRemoteSshCommand({
+        host: 'example.internal',
+        username: 'azureuser',
+        port: 22,
+        targetPath: '/home/azureuser/pro/smv/.emdash/worktrees/task one',
+      })
+    ).toBe(
+      `ssh 'azureuser@example.internal' -o 'ControlMaster=no' -o 'ControlPath=none' -p '22' -t '${expectedRemoteShellCommand.replace(/'/g, `'\\''`)}'`
+    );
+  });
+
+  it('preserves existing user@host authority in shell command string', () => {
+    expect(
+      buildRemoteSshCommand({
+        host: 'ops@example.internal',
+        username: 'ignored-user',
+        port: 22,
+        targetPath: '/tmp/x',
+      })
+    ).toContain(`ssh 'ops@example.internal'`);
   });
 });

@@ -13,8 +13,11 @@ import {
 } from '@shared/openInApps';
 import { databaseService } from '../services/DatabaseService';
 import { buildExternalToolEnv } from '../utils/childProcessEnv';
-import { buildGhosttyRemoteExecArgs, buildRemoteEditorUrl } from '../utils/remoteOpenIn';
-import { quoteShellArg } from '../utils/shellEscape';
+import {
+  buildGhosttyRemoteExecArgs,
+  buildRemoteEditorUrl,
+  buildRemoteSshCommand,
+} from '../utils/remoteOpenIn';
 
 const UNKNOWN_VERSION = 'unknown';
 
@@ -63,6 +66,9 @@ const execFileCommand = (
     );
   });
 };
+
+const escapeAppleScriptString = (value: string): string =>
+  value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
 const dedupeAndSortFonts = (fonts: string[]): string[] => {
   const unique = Array.from(new Set(fonts.map((font) => font.trim()).filter(Boolean)));
@@ -325,37 +331,46 @@ export function registerAppIpc() {
               return { success: true };
             } else if (appId === 'terminal' && platform === 'darwin') {
               // macOS Terminal.app - execute SSH command
-              // Security: Use quoteShellArg to prevent command injection
-              const sshCommand = `ssh ${quoteShellArg(connection.username)}@${quoteShellArg(connection.host)} -p ${quoteShellArg(String(connection.port))} -t "cd ${quoteShellArg(target)} && exec \\$SHELL"`;
-              // Properly escape for AppleScript
-              const escapedCommand = sshCommand.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-              const terminalCommand = `osascript -e 'tell application "Terminal" to do script "${escapedCommand}"' -e 'tell application "Terminal" to activate'`;
-
-              await new Promise<void>((resolve, reject) => {
-                exec(terminalCommand, { env: buildExternalToolEnv() }, (err) => {
-                  if (err) return reject(err);
-                  resolve();
-                });
+              const sshCommand = buildRemoteSshCommand({
+                host: connection.host,
+                username: connection.username,
+                port: connection.port,
+                targetPath: target,
               });
+              const escapedCommand = escapeAppleScriptString(sshCommand);
+
+              await execFileCommand('osascript', [
+                '-e',
+                `tell application "Terminal" to do script "${escapedCommand}"`,
+                '-e',
+                'tell application "Terminal" to activate',
+              ]);
               return { success: true };
             } else if (appId === 'iterm2' && platform === 'darwin') {
               // iTerm2 - execute SSH command
-              // Security: Use quoteShellArg to prevent command injection
-              const sshCommand = `ssh ${quoteShellArg(connection.username)}@${quoteShellArg(connection.host)} -p ${quoteShellArg(String(connection.port))} -t "cd ${quoteShellArg(target)} && exec \\$SHELL"`;
-              const escapedCommand = sshCommand.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-              const terminalCommand = `osascript -e 'tell application "iTerm" to create window with default profile command "${escapedCommand}"'`;
-
-              await new Promise<void>((resolve, reject) => {
-                exec(terminalCommand, { env: buildExternalToolEnv() }, (err) => {
-                  if (err) return reject(err);
-                  resolve();
-                });
+              const sshCommand = buildRemoteSshCommand({
+                host: connection.host,
+                username: connection.username,
+                port: connection.port,
+                targetPath: target,
               });
+              const escapedCommand = escapeAppleScriptString(sshCommand);
+
+              await execFileCommand('osascript', [
+                '-e',
+                `tell application "iTerm" to create window with default profile command "${escapedCommand}"`,
+                '-e',
+                'tell application "iTerm" to activate',
+              ]);
               return { success: true };
             } else if (appId === 'warp' && platform === 'darwin') {
               // Warp - use URL scheme with SSH command
-              // Security: Use quoteShellArg to prevent command injection
-              const sshCommand = `ssh ${quoteShellArg(connection.username)}@${quoteShellArg(connection.host)} -p ${quoteShellArg(String(connection.port))} -t "cd ${quoteShellArg(target)} && exec \\$SHELL"`;
+              const sshCommand = buildRemoteSshCommand({
+                host: connection.host,
+                username: connection.username,
+                port: connection.port,
+                targetPath: target,
+              });
               await shell.openExternal(
                 `warp://action/new_window?cmd=${encodeURIComponent(sshCommand)}`
               );

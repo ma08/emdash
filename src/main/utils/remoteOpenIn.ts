@@ -35,6 +35,30 @@ type GhosttyRemoteExecInput = {
 };
 
 /**
+ * Shell payload executed on the remote host after SSH connects.
+ *
+ * Goals:
+ * - always start in the requested directory
+ * - preserve current TERM only when host supports it (fallback for missing terminfo)
+ * - keep session alive even when SHELL is unset/invalid by chaining shell fallbacks
+ */
+export function buildRemoteTerminalShellCommand(targetPath: string): string {
+  return `cd ${quoteShellArg(targetPath)} && (if command -v infocmp >/dev/null 2>&1 && [ -n "\${TERM:-}" ] && infocmp "\${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`;
+}
+
+/**
+ * Builds a single SSH command string for terminals that accept shell command text
+ * (Terminal.app, iTerm2 via AppleScript, Warp URL cmd parameter).
+ *
+ * Command text is shell-escaped because these launchers execute through a shell.
+ */
+export function buildRemoteSshCommand(input: GhosttyRemoteExecInput): string {
+  const sshAuthority = buildRemoteSshAuthority(input.host, input.username);
+  const remoteCommand = buildRemoteTerminalShellCommand(input.targetPath);
+  return `ssh ${quoteShellArg(sshAuthority)} -o ${quoteShellArg('ControlMaster=no')} -o ${quoteShellArg('ControlPath=none')} -p ${quoteShellArg(String(input.port))} -t ${quoteShellArg(remoteCommand)}`;
+}
+
+/**
  * Builds argv tokens for Ghostty `-e` remote SSH execution.
  *
  * We pass these tokens directly via child_process execFile/spawn (shell disabled),
@@ -43,9 +67,7 @@ type GhosttyRemoteExecInput = {
  */
 export function buildGhosttyRemoteExecArgs(input: GhosttyRemoteExecInput): string[] {
   const sshAuthority = buildRemoteSshAuthority(input.host, input.username);
-  // Many hosts lack xterm-ghostty terminfo. Prefer current TERM when supported,
-  // otherwise fall back to xterm-256color so TUIs (e.g. ranger) still work.
-  const remoteCommand = `cd ${quoteShellArg(input.targetPath)} && (if command -v infocmp >/dev/null 2>&1 && [ -n "\${TERM:-}" ] && infocmp "\${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`;
+  const remoteCommand = buildRemoteTerminalShellCommand(input.targetPath);
   return [
     'ssh',
     sshAuthority,
