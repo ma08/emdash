@@ -19,9 +19,7 @@ describe('buildRemoteEditorUrl', () => {
   it('builds cursor remote URL with encoded user@host authority', () => {
     expect(
       buildRemoteEditorUrl('cursor', 'example.internal', 'azureuser', '/home/azureuser/src')
-    ).toBe(
-      'cursor://vscode-remote/ssh-remote+azureuser%40example.internal/home/azureuser/src'
-    );
+    ).toBe('cursor://vscode-remote/ssh-remote+azureuser%40example.internal/home/azureuser/src');
   });
 
   it('normalizes relative target paths with a leading slash', () => {
