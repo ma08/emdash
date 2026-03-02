@@ -52,11 +52,11 @@ describe('buildGhosttyRemoteExecArgs', () => {
       '-p',
       '22',
       '-t',
-      `cd '/home/azureuser/pro/smv/.emdash/worktrees/task one' && (exec "\${SHELL:-/bin/sh}" || exec /bin/sh)`,
+      `cd '/home/azureuser/pro/smv/.emdash/worktrees/task one' && export TERM=xterm-256color && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
     ]);
   });
 
-  it('preserves an existing user@host authority from host input', () => {
+  it('preserves existing user@host authority', () => {
     expect(
       buildGhosttyRemoteExecArgs({
         host: 'ops@example.internal',
@@ -74,7 +74,7 @@ describe('buildGhosttyRemoteExecArgs', () => {
       '-p',
       '2202',
       '-t',
-      `cd '/tmp/x' && (exec "\${SHELL:-/bin/sh}" || exec /bin/sh)`,
+      `cd '/tmp/x' && export TERM=xterm-256color && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
     ]);
   });
 });

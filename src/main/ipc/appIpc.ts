@@ -362,8 +362,10 @@ export function registerAppIpc() {
               return { success: true };
             } else if (appId === 'ghostty') {
               // Ghostty - execute SSH command directly.
-              // On macOS, open -a/open -b can ignore --args when Ghostty is already running.
-              // Use open -n first and pass argv directly to avoid shell quoting issues.
+              // Prefer remote login shell behavior for normal prompt/init scripts while
+              // keeping deterministic fallbacks when SHELL is missing or invalid.
+              // Compatibility note: many remote hosts don't ship xterm-ghostty terminfo.
+              // The argv builder forces TERM=xterm-256color to keep TUIs (e.g. ranger) working.
               const ghosttyExecArgs = buildGhosttyRemoteExecArgs({
                 host: connection.host,
                 username: connection.username,

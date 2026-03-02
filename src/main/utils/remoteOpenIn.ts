@@ -43,7 +43,7 @@ type GhosttyRemoteExecInput = {
  */
 export function buildGhosttyRemoteExecArgs(input: GhosttyRemoteExecInput): string[] {
   const sshAuthority = buildRemoteSshAuthority(input.host, input.username);
-  const remoteCommand = `cd ${quoteShellArg(input.targetPath)} && (exec "\${SHELL:-/bin/sh}" || exec /bin/sh)`;
+  const remoteCommand = `cd ${quoteShellArg(input.targetPath)} && export TERM=xterm-256color && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`;
   return [
     'ssh',
     sshAuthority,
