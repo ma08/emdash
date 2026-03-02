@@ -341,7 +341,9 @@ export function registerAppIpc() {
               return { success: true };
             } else if (appId === 'ghostty') {
               // Ghostty - execute SSH command directly.
-              // On macOS, prefer launching the app bundle so we don't depend on a CLI symlink.
+              // On macOS, open -a/open -b can ignore --args when Ghostty is already running,
+              // which opens a default tab instead of executing our SSH command. Prefer direct
+              // CLI/binary invocations first, then force a new app instance as fallback.
               // Security: Use quoteShellArg to prevent command injection
               const quoted = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
               const sshTarget = `${connection.username}@${connection.host}`;
@@ -360,9 +362,10 @@ export function registerAppIpc() {
               const terminalCommand =
                 platform === 'darwin'
                   ? [
-                      `open -b com.mitchellh.ghostty --args ${escapedArgs}`,
-                      `open -a "Ghostty" --args ${escapedArgs}`,
                       cliCommand,
+                      // Avoid direct app-bundle binary invocation on macOS because it can
+                      // trigger kTCCServiceSystemPolicyAppBundles ("modify apps") denials.
+                      `open -na "Ghostty" --args ${escapedArgs}`,
                     ].join(' || ')
                   : cliCommand;
 
