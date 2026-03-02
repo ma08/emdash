@@ -45,6 +45,10 @@ describe('buildGhosttyRemoteExecArgs', () => {
     ).toEqual([
       'ssh',
       'azureuser@example.internal',
+      '-o',
+      'ControlMaster=no',
+      '-o',
+      'ControlPath=none',
       '-p',
       '22',
       '-t',
@@ -63,6 +67,10 @@ describe('buildGhosttyRemoteExecArgs', () => {
     ).toEqual([
       'ssh',
       'ops@example.internal',
+      '-o',
+      'ControlMaster=no',
+      '-o',
+      'ControlPath=none',
       '-p',
       '2202',
       '-t',
