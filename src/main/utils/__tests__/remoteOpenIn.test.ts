@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildRemoteEditorUrl, buildRemoteSshAuthority } from '../remoteOpenIn';
+import {
+  buildGhosttyRemoteExecCommand,
+  buildRemoteEditorUrl,
+  buildRemoteSshAuthority,
+} from '../remoteOpenIn';
 
 describe('buildRemoteSshAuthority', () => {
   it('prepends username when host has no user component', () => {
@@ -26,5 +30,31 @@ describe('buildRemoteEditorUrl', () => {
     expect(buildRemoteEditorUrl('vscode', 'example.internal', 'azureuser', 'workspace')).toBe(
       'vscode://vscode-remote/ssh-remote+azureuser%40example.internal/workspace'
     );
+  });
+});
+
+describe('buildGhosttyRemoteExecCommand', () => {
+  it('builds a single quoted ssh command string for Ghostty -e', () => {
+    expect(
+      buildGhosttyRemoteExecCommand({
+        host: 'example.internal',
+        username: 'azureuser',
+        port: 22,
+        targetPath: '/home/azureuser/pro/smv/.emdash/worktrees/task one',
+      })
+    ).toBe(
+      "ssh 'azureuser@example.internal' -p '22' -t 'cd '\\''/home/azureuser/pro/smv/.emdash/worktrees/task one'\\'' && (exec \"${SHELL:-/bin/sh}\" || exec /bin/sh)'"
+    );
+  });
+
+  it('preserves an existing user@host authority from host input', () => {
+    expect(
+      buildGhosttyRemoteExecCommand({
+        host: 'ops@example.internal',
+        username: 'ignored-user',
+        port: '2202',
+        targetPath: '/tmp/x',
+      })
+    ).toContain("ssh 'ops@example.internal' -p '2202' -t ");
   });
 });

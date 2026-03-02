@@ -13,7 +13,7 @@ import {
 } from '@shared/openInApps';
 import { databaseService } from '../services/DatabaseService';
 import { buildExternalToolEnv } from '../utils/childProcessEnv';
-import { buildRemoteEditorUrl } from '../utils/remoteOpenIn';
+import { buildGhosttyRemoteExecCommand, buildRemoteEditorUrl } from '../utils/remoteOpenIn';
 import { quoteShellArg } from '../utils/shellEscape';
 
 const UNKNOWN_VERSION = 'unknown';
@@ -341,31 +341,26 @@ export function registerAppIpc() {
               return { success: true };
             } else if (appId === 'ghostty') {
               // Ghostty - execute SSH command directly.
-              // On macOS, open -a/open -b can ignore --args when Ghostty is already running,
-              // which opens a default tab instead of executing our SSH command. Prefer direct
-              // CLI/binary invocations first, then force a new app instance as fallback.
+              // On macOS, open -a/open -b can ignore --args when Ghostty is already running.
+              // Use open -n first, and pass one single command string to `-e` so the remote
+              // SSH command is preserved as intended.
               // Security: Use quoteShellArg to prevent command injection
               const quoted = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
-              const sshTarget = `${connection.username}@${connection.host}`;
-              const remoteCommand = `cd ${quoteShellArg(target)} && exec $SHELL`;
-              const ghosttyArgs = [
-                '-e',
-                'ssh',
-                sshTarget,
-                '-p',
-                String(connection.port),
-                '-t',
-                remoteCommand,
-              ];
+              const ghosttyExecCommand = buildGhosttyRemoteExecCommand({
+                host: connection.host,
+                username: connection.username,
+                port: connection.port,
+                targetPath: target,
+              });
+              const ghosttyArgs = ['-e', ghosttyExecCommand];
               const escapedArgs = ghosttyArgs.map(quoted).join(' ');
               const cliCommand = `ghostty ${escapedArgs}`;
               const terminalCommand =
                 platform === 'darwin'
                   ? [
-                      cliCommand,
-                      // Avoid direct app-bundle binary invocation on macOS because it can
-                      // trigger kTCCServiceSystemPolicyAppBundles ("modify apps") denials.
+                      `open -n -b com.mitchellh.ghostty --args ${escapedArgs}`,
                       `open -na "Ghostty" --args ${escapedArgs}`,
+                      cliCommand,
                     ].join(' || ')
                   : cliCommand;
 
