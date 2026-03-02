@@ -343,15 +343,25 @@ export function registerAppIpc() {
               // Ghostty - execute SSH command directly.
               // On macOS, prefer launching the app bundle so we don't depend on a CLI symlink.
               // Security: Use quoteShellArg to prevent command injection
-              const sshCommand = `ssh ${quoteShellArg(connection.username)}@${quoteShellArg(connection.host)} -p ${quoteShellArg(String(connection.port))} -t "cd ${quoteShellArg(target)} && exec \\$SHELL"`;
               const quoted = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
-              const escapedSshCommand = quoted(sshCommand);
-              const cliCommand = `ghostty -e ${escapedSshCommand}`;
+              const sshTarget = `${connection.username}@${connection.host}`;
+              const remoteCommand = `cd ${quoteShellArg(target)} && exec $SHELL`;
+              const ghosttyArgs = [
+                '-e',
+                'ssh',
+                sshTarget,
+                '-p',
+                String(connection.port),
+                '-t',
+                remoteCommand,
+              ];
+              const escapedArgs = ghosttyArgs.map(quoted).join(' ');
+              const cliCommand = `ghostty ${escapedArgs}`;
               const terminalCommand =
                 platform === 'darwin'
                   ? [
-                      `open -b com.mitchellh.ghostty --args -e ${escapedSshCommand}`,
-                      `open -a "Ghostty" --args -e ${escapedSshCommand}`,
+                      `open -b com.mitchellh.ghostty --args ${escapedArgs}`,
+                      `open -a "Ghostty" --args ${escapedArgs}`,
                       cliCommand,
                     ].join(' || ')
                   : cliCommand;
