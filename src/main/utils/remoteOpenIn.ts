@@ -43,7 +43,9 @@ type GhosttyRemoteExecInput = {
  */
 export function buildGhosttyRemoteExecArgs(input: GhosttyRemoteExecInput): string[] {
   const sshAuthority = buildRemoteSshAuthority(input.host, input.username);
-  const remoteCommand = `cd ${quoteShellArg(input.targetPath)} && export TERM=xterm-256color && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`;
+  // Many hosts lack xterm-ghostty terminfo. Prefer current TERM when supported,
+  // otherwise fall back to xterm-256color so TUIs (e.g. ranger) still work.
+  const remoteCommand = `cd ${quoteShellArg(input.targetPath)} && (if command -v infocmp >/dev/null 2>&1 && [ -n "\${TERM:-}" ] && infocmp "\${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`;
   return [
     'ssh',
     sshAuthority,

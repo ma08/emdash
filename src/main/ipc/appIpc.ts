@@ -365,7 +365,8 @@ export function registerAppIpc() {
               // Prefer remote login shell behavior for normal prompt/init scripts while
               // keeping deterministic fallbacks when SHELL is missing or invalid.
               // Compatibility note: many remote hosts don't ship xterm-ghostty terminfo.
-              // The argv builder forces TERM=xterm-256color to keep TUIs (e.g. ranger) working.
+              // The argv builder falls back to TERM=xterm-256color only when current TERM
+              // isn't supported, keeping TUIs (e.g. ranger) working without always downgrading.
               const ghosttyExecArgs = buildGhosttyRemoteExecArgs({
                 host: connection.host,
                 username: connection.username,

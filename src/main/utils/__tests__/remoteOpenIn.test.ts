@@ -52,7 +52,7 @@ describe('buildGhosttyRemoteExecArgs', () => {
       '-p',
       '22',
       '-t',
-      `cd '/home/azureuser/pro/smv/.emdash/worktrees/task one' && export TERM=xterm-256color && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
+      `cd '/home/azureuser/pro/smv/.emdash/worktrees/task one' && (if command -v infocmp >/dev/null 2>&1 && [ -n "\${TERM:-}" ] && infocmp "\${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
     ]);
   });
 
@@ -74,7 +74,7 @@ describe('buildGhosttyRemoteExecArgs', () => {
       '-p',
       '2202',
       '-t',
-      `cd '/tmp/x' && export TERM=xterm-256color && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
+      `cd '/tmp/x' && (if command -v infocmp >/dev/null 2>&1 && [ -n "\${TERM:-}" ] && infocmp "\${TERM}" >/dev/null 2>&1; then :; else export TERM=xterm-256color; fi) && (exec "\${SHELL:-/bin/bash}" || exec /bin/bash || exec /bin/sh)`,
     ]);
   });
 });
