@@ -1,5 +1,5 @@
 import { app, clipboard, ipcMain, shell } from 'electron';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { ensureProjectPrepared } from '../services/ProjectPrep';
@@ -13,7 +13,7 @@ import {
 } from '@shared/openInApps';
 import { databaseService } from '../services/DatabaseService';
 import { buildExternalToolEnv } from '../utils/childProcessEnv';
-import { buildGhosttyRemoteExecCommand, buildRemoteEditorUrl } from '../utils/remoteOpenIn';
+import { buildGhosttyRemoteExecArgs, buildRemoteEditorUrl } from '../utils/remoteOpenIn';
 import { quoteShellArg } from '../utils/shellEscape';
 
 const UNKNOWN_VERSION = 'unknown';
@@ -38,6 +38,27 @@ const execCommand = (
       (error, stdout) => {
         if (error) return reject(error);
         resolve(stdout ?? '');
+      }
+    );
+  });
+};
+
+const execFileCommand = (
+  file: string,
+  args: string[],
+  opts?: { timeout?: number }
+): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      args,
+      {
+        timeout: opts?.timeout ?? 30000,
+        env: buildExternalToolEnv(),
+      },
+      (error) => {
+        if (error) return reject(error);
+        resolve();
       }
     );
   });
@@ -342,35 +363,48 @@ export function registerAppIpc() {
             } else if (appId === 'ghostty') {
               // Ghostty - execute SSH command directly.
               // On macOS, open -a/open -b can ignore --args when Ghostty is already running.
-              // Use open -n first, and pass one single command string to `-e` so the remote
-              // SSH command is preserved as intended.
-              // Security: Use quoteShellArg to prevent command injection
-              const quoted = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
-              const ghosttyExecCommand = buildGhosttyRemoteExecCommand({
+              // Use open -n first and pass argv directly to avoid shell quoting issues.
+              const ghosttyExecArgs = buildGhosttyRemoteExecArgs({
                 host: connection.host,
                 username: connection.username,
                 port: connection.port,
                 targetPath: target,
               });
-              const ghosttyArgs = ['-e', ghosttyExecCommand];
-              const escapedArgs = ghosttyArgs.map(quoted).join(' ');
-              const cliCommand = `ghostty ${escapedArgs}`;
-              const terminalCommand =
+
+              const attempts =
                 platform === 'darwin'
                   ? [
-                      `open -n -b com.mitchellh.ghostty --args ${escapedArgs}`,
-                      `open -na "Ghostty" --args ${escapedArgs}`,
-                      cliCommand,
-                    ].join(' || ')
-                  : cliCommand;
+                      {
+                        file: 'open',
+                        args: [
+                          '-n',
+                          '-b',
+                          'com.mitchellh.ghostty',
+                          '--args',
+                          '-e',
+                          ...ghosttyExecArgs,
+                        ],
+                      },
+                      {
+                        file: 'open',
+                        args: ['-na', 'Ghostty', '--args', '-e', ...ghosttyExecArgs],
+                      },
+                      { file: 'ghostty', args: ['-e', ...ghosttyExecArgs] },
+                    ]
+                  : [{ file: 'ghostty', args: ['-e', ...ghosttyExecArgs] }];
 
-              await new Promise<void>((resolve, reject) => {
-                exec(terminalCommand, { env: buildExternalToolEnv() }, (err) => {
-                  if (err) return reject(err);
-                  resolve();
-                });
-              });
-              return { success: true };
+              let lastError: unknown = null;
+              for (const attempt of attempts) {
+                try {
+                  await execFileCommand(attempt.file, attempt.args);
+                  return { success: true };
+                } catch (error) {
+                  lastError = error;
+                }
+              }
+
+              if (lastError instanceof Error) throw lastError;
+              throw new Error('Unable to launch Ghostty');
             } else if (appConfig.supportsRemote) {
               // App claims to support remote but we don't have a handler
               return {

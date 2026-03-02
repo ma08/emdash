@@ -35,22 +35,14 @@ type GhosttyRemoteExecInput = {
 };
 
 /**
- * Builds a single shell command string for Ghostty `-e` on macOS/Linux.
+ * Builds argv tokens for Ghostty `-e` remote SSH execution.
  *
- * Ghostty remote launch is most reliable when everything after `-e` is a
- * single command string (instead of tokenized argv pieces). The remote command
- * itself is shell-escaped so characters like spaces/parentheses don't break.
+ * We pass these tokens directly via child_process execFile/spawn (shell disabled),
+ * so host/port are not shell-quoted here. The remote command itself is still
+ * shell-escaped because it is parsed by the remote shell over SSH.
  */
-export function buildGhosttyRemoteExecCommand(input: GhosttyRemoteExecInput): string {
+export function buildGhosttyRemoteExecArgs(input: GhosttyRemoteExecInput): string[] {
   const sshAuthority = buildRemoteSshAuthority(input.host, input.username);
-  const remoteCommand =
-    `cd ${quoteShellArg(input.targetPath)} && ` + '(exec "${SHELL:-/bin/sh}" || exec /bin/sh)';
-  return [
-    'ssh',
-    quoteShellArg(sshAuthority),
-    '-p',
-    quoteShellArg(String(input.port)),
-    '-t',
-    quoteShellArg(remoteCommand),
-  ].join(' ');
+  const remoteCommand = `cd ${quoteShellArg(input.targetPath)} && (exec "\${SHELL:-/bin/sh}" || exec /bin/sh)`;
+  return ['ssh', sshAuthority, '-p', String(input.port), '-t', remoteCommand];
 }
