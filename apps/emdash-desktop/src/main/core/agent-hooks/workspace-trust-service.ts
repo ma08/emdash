@@ -2,6 +2,7 @@ import type { IExecutionContext } from '@main/core/execution-context/types';
 import type { FileSystemProvider } from '@main/core/fs/types';
 import type { AgentProviderId } from '@shared/core/agents/agent-provider-registry';
 import { claudeTrustService } from './claude-trust-service';
+import { codexTrustService } from './codex-trust-service';
 import { cursorTrustService } from './cursor-trust-service';
 
 type WorkspaceTrustLocalArgs = {
@@ -42,5 +43,6 @@ export class WorkspaceTrustService {
 
 export const workspaceTrustService = new WorkspaceTrustService([
   claudeTrustService,
+  codexTrustService,
   cursorTrustService,
 ]);

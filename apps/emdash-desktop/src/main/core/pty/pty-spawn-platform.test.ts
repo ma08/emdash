@@ -672,9 +672,10 @@ describe('resolveLocalPtySpawn - POSIX', () => {
 
     expect(result.command).toBe('bash');
     expect(result.args[0]).toBe('-lc');
-    expect(result.args[1]).toContain('zellij attach --create-background "$session"');
+    expect(result.args[1]).toContain('zellij attach --create "$session"');
     expect(result.args[1]).toContain('tab name="Dev Server"');
-    expect(result.args[1]).toContain('pane command="/bin/sh"');
+    expect(result.args[1]).toContain('pane command="bash"');
+    expect(result.args[1]).toContain('args "-c" "exec bash -il"');
     expect(result.args[1]).toContain('cwd="/repo"');
     expect(result.args[1]).toContain('bash');
     expect(result.args[1]).toContain('exec bash -il');
@@ -699,7 +700,8 @@ describe('resolveLocalPtySpawn - POSIX', () => {
 
     expect(result.command).toBe('bash');
     expect(result.args[0]).toBe('-c');
-    expect(result.args[1]).toContain('pane command="/bin/sh"');
+    expect(result.args[1]).toContain('pane command="bash"');
+    expect(result.args[1]).toContain('args "-c" "source ~/.nvm/nvm.sh && exec bash -il"');
     expect(result.args[1]).toContain('bash');
     expect(result.args[1]).toContain('-c');
     expect(result.args[1]).toContain('source ~/.nvm/nvm.sh && exec bash -il');

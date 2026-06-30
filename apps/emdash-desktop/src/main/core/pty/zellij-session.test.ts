@@ -99,12 +99,13 @@ describe('buildZellijShellLine', () => {
     expect(result).not.toContain('--create-background');
     expect(result).toContain('tab name="Claude Chat"');
     expect(result).toContain('pane command="/bin/sh"');
+    expect(result).toContain('args "-c" "printf');
     expect(result).toContain('cwd="/workspace/project"');
     expect(result).toContain('printf');
     expect(result).toContain('hello world');
   });
 
-  it('runs panes through the selected shell profile', () => {
+  it('runs panes directly through the selected shell profile', () => {
     const result = buildZellijShellLine(
       'emdash-claude.abc123',
       'source ~/.nvm/nvm.sh && exec bash -il',
@@ -116,10 +117,10 @@ describe('buildZellijShellLine', () => {
       }
     );
 
-    expect(result).toContain('pane command="/bin/sh"');
-    expect(result).toContain('/bin/bash');
-    expect(result).toContain('-lc');
+    expect(result).toContain('pane command="/bin/bash"');
+    expect(result).toContain('args "-lc" "source ~/.nvm/nvm.sh && exec bash -il"');
     expect(result).toContain('source ~/.nvm/nvm.sh && exec bash -il');
+    expect(result).not.toContain("exec '/bin/bash'");
   });
 
   it('attaches active sessions without deleting or recreating them', () => {

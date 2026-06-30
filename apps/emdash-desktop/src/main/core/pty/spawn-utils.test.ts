@@ -184,12 +184,11 @@ describe('resolveSshCommand', () => {
       zshProfile
     );
 
-    expect(result).toContain('zellij attach --create-background "$session"');
+    expect(result).toContain('zellij attach --create "$session"');
     expect(result).toContain('zellij attach "$session" options --on-force-close detach');
     expect(result).toContain('tab name="Claude Chat"');
-    expect(result).toContain('pane command="/bin/sh"');
-    expect(result).toContain('/bin/zsh');
-    expect(result).toContain('-c');
+    expect(result).toContain('pane command="/bin/zsh"');
+    expect(result).toContain('args "-c"');
     expect(result).toContain('cwd="/workspace"');
     expect(result).toContain('claude');
     expect(result).toContain('--resume');
@@ -210,9 +209,8 @@ describe('resolveSshCommand', () => {
       zshProfile
     );
 
-    expect(result).toContain('pane command="/bin/sh"');
-    expect(result).toContain('/bin/zsh');
-    expect(result).toContain('-c');
+    expect(result).toContain('pane command="/bin/zsh"');
+    expect(result).toContain('args "-c"');
     expect(result).toContain('source ~/.nvm/nvm.sh &&');
     expect(result).toContain('claude');
   });

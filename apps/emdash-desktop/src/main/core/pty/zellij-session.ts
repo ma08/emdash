@@ -23,15 +23,23 @@ export type ZellijShellOptions = {
   shellArgs?: string[];
 };
 
+type ZellijPaneCommand = {
+  command: string;
+  args: string[];
+};
+
 function kdlQuote(value: string): string {
   return JSON.stringify(value);
 }
 
-function buildPaneCommandLine(commandLine: string, options: ZellijShellOptions): string {
-  const shell = options.shell?.trim();
-  if (!shell) return commandLine;
-  const shellArgs = options.shellArgs?.length ? options.shellArgs : ['-lc'];
-  return `exec ${[shell, ...shellArgs, commandLine].map(quoteShellArg).join(' ')}`;
+function buildPaneCommand(commandLine: string, options: ZellijShellOptions): ZellijPaneCommand {
+  const shell = options.shell?.trim() || '/bin/sh';
+  const shellArgs = options.shellArgs?.length ? options.shellArgs : ['-c'];
+  return { command: shell, args: [...shellArgs, commandLine] };
+}
+
+function buildKdlArgs(args: string[]): string {
+  return args.map(kdlQuote).join(' ');
 }
 
 function shortHash(value: string, length: number): string {
@@ -113,12 +121,12 @@ export function buildZellijShellLine(
   options: ZellijShellOptions = {}
 ): string {
   const label = options.displayName?.trim() || 'Emdash';
-  const paneCommandLine = buildPaneCommandLine(commandLine, options);
+  const paneCommand = buildPaneCommand(commandLine, options);
   const layout = [
     'layout {',
     `  tab name=${kdlQuote(label)} {`,
-    `    pane command="/bin/sh" cwd=${kdlQuote(cwd)} close_on_exit=true focus=true name=${kdlQuote(label)} {`,
-    `      args "-lc" ${kdlQuote(paneCommandLine)}`,
+    `    pane command=${kdlQuote(paneCommand.command)} cwd=${kdlQuote(cwd)} close_on_exit=true focus=true name=${kdlQuote(label)} {`,
+    `      args ${buildKdlArgs(paneCommand.args)}`,
     '    }',
     '  }',
     '}',
