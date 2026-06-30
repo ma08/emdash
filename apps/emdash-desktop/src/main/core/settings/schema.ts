@@ -1,6 +1,7 @@
 import z from 'zod';
 import { BROWSER_ISOLATED_PROFILE_ID } from '@shared/browser';
 import { AGENT_PROVIDER_IDS } from '@shared/core/agents/agent-provider-registry';
+import { sessionMultiplexerSchema } from '@shared/core/project-settings/project-settings';
 import {
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
@@ -16,6 +17,7 @@ export const projectSettingsSchema = z.object({
   branchPrefix: z.string().transform(normalizeBranchPrefix),
   appendRandomBranchSuffix: z.boolean(),
   tmuxByDefault: z.boolean(),
+  sessionMultiplexerByDefault: sessionMultiplexerSchema.optional(),
 });
 
 export const localProjectSettingsSchema = z.object({

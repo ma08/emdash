@@ -157,7 +157,7 @@ describe('resolveSshCommand', () => {
     const result = resolveSshCommand(
       'agent',
       makeAgentConfig({
-        tmuxSessionName: 'agent-session',
+        multiplexerSession: { kind: 'tmux', sessionName: 'agent-session' },
       }),
       undefined,
       zshProfile
@@ -168,6 +168,51 @@ describe('resolveSshCommand', () => {
     expect(result).toContain('tmux -u attach-session -t \\"agent-session\\"');
     expect(result).toContain('/bin/sh -c');
     expect(result).toContain("'\\''claude'\\'' '\\''--resume'\\'' '\\''conv-1'\\''");
+  });
+
+  it('preserves remote zellij wrapping for SSH commands', () => {
+    const result = resolveSshCommand(
+      'agent',
+      makeAgentConfig({
+        multiplexerSession: {
+          kind: 'zellij',
+          sessionName: 'emdash-claude.cHJvai0xOnRhc2stMTpjb252LTE',
+          displayName: 'Claude Chat',
+        },
+      }),
+      undefined,
+      zshProfile
+    );
+
+    expect(result).toContain('zellij attach --create "$session"');
+    expect(result).toContain('zellij attach "$session" options --on-force-close detach');
+    expect(result).toContain('tab name="Claude Chat"');
+    expect(result).toContain('pane command="/bin/zsh"');
+    expect(result).toContain('args "-c"');
+    expect(result).toContain('cwd="/workspace"');
+    expect(result).toContain('claude');
+    expect(result).toContain('--resume');
+    expect(result).toContain('conv-1');
+  });
+
+  it('runs remote zellij panes through shell profiles that support shellSetup', () => {
+    const result = resolveSshCommand(
+      'agent',
+      makeAgentConfig({
+        shellSetup: 'source ~/.nvm/nvm.sh',
+        multiplexerSession: {
+          kind: 'zellij',
+          sessionName: 'emdash-claude.cHJvai0xOnRhc2stMTpjb252LTE',
+        },
+      }),
+      undefined,
+      zshProfile
+    );
+
+    expect(result).toContain('pane command="/bin/zsh"');
+    expect(result).toContain('args "-c"');
+    expect(result).toContain('source ~/.nvm/nvm.sh &&');
+    expect(result).toContain('claude');
   });
 
   it('launches remote general terminals with the captured remote shell', () => {

@@ -44,6 +44,7 @@ describe('getEffectiveTaskSettings', () => {
       },
     });
     expect(settings).not.toHaveProperty('tmux');
+    expect(settings).not.toHaveProperty('sessionMultiplexer');
     expect(settings).not.toHaveProperty('remote');
     expect(settings).not.toHaveProperty('baseRemote');
   });

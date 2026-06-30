@@ -2,8 +2,10 @@ import type { GitBranchRef } from '@emdash/core/git';
 import { projectDefaultBranchToBranch } from '@shared/core/git/utils';
 import type {
   ProjectSettings,
+  SessionMultiplexer,
   ShareableProjectSettingsWriteField,
 } from '@shared/core/project-settings/project-settings';
+import { resolveSessionMultiplexer } from '@shared/core/project-settings/project-settings';
 import {
   SHAREABLE_FIELD_DESCRIPTOR_BY_ID,
   SHAREABLE_FIELD_DESCRIPTORS,
@@ -13,7 +15,7 @@ import {
 export type FormState = {
   preservePatterns: string;
   shellSetup: string;
-  tmux: boolean;
+  sessionMultiplexer: SessionMultiplexer;
   autoRunSetupScriptOnTaskCreation: boolean;
   autoRunRunScriptOnTaskCreation: boolean;
   scriptSetup: string;
@@ -63,7 +65,7 @@ export function settingsToForm(
   return {
     preservePatterns: (s.preservePatterns ?? []).join('\n'),
     shellSetup: s.shellSetup ?? '',
-    tmux: s.tmux ?? false,
+    sessionMultiplexer: resolveSessionMultiplexer(s),
     autoRunSetupScriptOnTaskCreation: s.autoRunSetupScriptOnTaskCreation ?? true,
     autoRunRunScriptOnTaskCreation: s.autoRunRunScriptOnTaskCreation ?? false,
     scriptSetup: normalizeScript(s.scripts?.setup),
@@ -103,7 +105,8 @@ export function formToSettings(f: FormState): ProjectSettings {
   return {
     preservePatterns: preservePatterns.length > 0 ? preservePatterns : undefined,
     shellSetup: blankToUndefined(f.shellSetup),
-    tmux: f.tmux,
+    sessionMultiplexer: f.sessionMultiplexer,
+    tmux: f.sessionMultiplexer === 'tmux',
     ...(f.autoRunSetupScriptOnTaskCreation ? {} : { autoRunSetupScriptOnTaskCreation: false }),
     ...(f.autoRunRunScriptOnTaskCreation ? { autoRunRunScriptOnTaskCreation: true } : {}),
     scripts: hasScripts ? scripts : undefined,

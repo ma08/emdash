@@ -3,9 +3,10 @@ import { projectManager } from '@main/core/projects/project-manager';
 import type { ProjectProvider } from '@main/core/projects/project-provider';
 import { log } from '@main/lib/logger';
 import { reconcileProjectTmuxSessions } from './tmux-reconcile';
+import { reconcileProjectZellijSessions } from './zellij-reconcile';
 
 /**
- * Reaps orphaned `emdash-*` tmux sessions on a remote host when an SSH project
+ * Reaps orphaned `emdash-*` multiplexer sessions on a remote host when an SSH project
  * is mounted. These accumulate when conversations/terminals are deleted while
  * detached, or when the app restarts and loses the in-memory session tracking
  * that the explicit Stop/Delete paths rely on (issue #2580).
@@ -30,7 +31,10 @@ export class RemoteTmuxReaperService implements IInitializable, IDisposable {
 
   private onProjectMounted(provider: ProjectProvider): void {
     if (provider.type !== 'ssh') return;
-    void reconcileProjectTmuxSessions(provider.ctx, provider.projectId).catch((err) => {
+    void Promise.all([
+      reconcileProjectTmuxSessions(provider.ctx, provider.projectId),
+      reconcileProjectZellijSessions(provider.ctx, provider.projectId),
+    ]).catch((err) => {
       log.warn('RemoteTmuxReaperService: reconcile failed', {
         projectId: provider.projectId,
         error: String(err),

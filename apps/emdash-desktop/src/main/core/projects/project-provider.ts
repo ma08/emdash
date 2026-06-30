@@ -13,6 +13,7 @@ import type { GitRepositoryService } from '@main/core/git/repository/service';
 import { previewServerService } from '@main/core/preview-servers/preview-server-service-instance';
 import type { MachineRef } from '@main/core/runtime/types';
 import { workspaceRegistry } from '@main/core/workspaces/workspace-registry';
+import { resolveSessionMultiplexer } from '@shared/core/project-settings/project-settings';
 import type { WorkspaceProviderData } from '@shared/core/workspaces/workspace-provider-data';
 import type { ProjectRemoteState } from '@shared/projects';
 import type { ConversationProvider } from '../conversations/types';
@@ -147,7 +148,7 @@ export class ProjectProvider implements IReleasable, IDisposable {
     try {
       this.gitRepositoryFetchService.stop();
       const projectSettings = await this.settings.get();
-      const mode = projectSettings.tmux ? 'detach' : 'terminate';
+      const mode = resolveSessionMultiplexer(projectSettings) !== 'none' ? 'detach' : 'terminate';
       await taskSessionManager.teardownAllForProject(this.projectId, mode);
       await workspaceRegistry.teardownAllForProject(this.projectId, mode);
       await previewServerService.stopForProject(this.projectId);

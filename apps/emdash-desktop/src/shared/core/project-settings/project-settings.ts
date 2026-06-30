@@ -18,6 +18,10 @@ export const defaultBranchSettingSchema = z.union([
 
 export type DefaultBranchSetting = z.infer<typeof defaultBranchSettingSchema>;
 
+export const sessionMultiplexerSchema = z.enum(['none', 'tmux', 'zellij']);
+export type SessionMultiplexer = z.infer<typeof sessionMultiplexerSchema>;
+export type PersistentSessionMultiplexer = Exclude<SessionMultiplexer, 'none'>;
+
 const preservePatternsSchema = z
   .array(z.string())
   .transform((patterns) => patterns.filter((pattern) => pattern !== PROJECT_CONFIG_FILE));
@@ -46,6 +50,7 @@ export const baseProjectSettingsSchema = z.object({
   baseRemote: z.string().optional(),
   pushRemote: z.string().optional(),
   githubAccountId: z.string().trim().min(1).nullable().optional(),
+  sessionMultiplexer: sessionMultiplexerSchema.optional(),
   tmux: z.boolean().optional(),
   autoRunSetupScriptOnTaskCreation: z.boolean().optional(),
   autoRunRunScriptOnTaskCreation: z.boolean().optional(),
@@ -59,6 +64,36 @@ export const baseProjectSettingsSchema = z.object({
 });
 
 export type BaseProjectSettings = z.infer<typeof baseProjectSettingsSchema>;
+
+export function resolveSessionMultiplexer(
+  settings: Pick<BaseProjectSettings, 'sessionMultiplexer' | 'tmux'>
+): SessionMultiplexer {
+  return settings.sessionMultiplexer ?? (settings.tmux ? 'tmux' : 'none');
+}
+
+export function isPersistentSessionMultiplexer(
+  sessionMultiplexer: SessionMultiplexer
+): sessionMultiplexer is PersistentSessionMultiplexer {
+  return sessionMultiplexer !== 'none';
+}
+
+export function withSessionMultiplexerCompatibility<
+  T extends { sessionMultiplexer?: SessionMultiplexer; tmux?: boolean },
+>(settings: T): T & { sessionMultiplexer: SessionMultiplexer; tmux: boolean } {
+  const sessionMultiplexer = resolveSessionMultiplexer(settings);
+  return {
+    ...settings,
+    sessionMultiplexer,
+    tmux: sessionMultiplexer === 'tmux',
+  };
+}
+
+export function resolveDefaultSessionMultiplexer(settings: {
+  sessionMultiplexerByDefault?: SessionMultiplexer;
+  tmuxByDefault?: boolean;
+}): SessionMultiplexer {
+  return settings.sessionMultiplexerByDefault ?? (settings.tmuxByDefault ? 'tmux' : 'none');
+}
 
 export const legacyBaseProjectSettingsSchema = baseProjectSettingsSchema.extend({
   remote: z.string().optional(),

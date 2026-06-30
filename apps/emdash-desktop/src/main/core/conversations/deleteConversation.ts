@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { acpSessionManager } from '@main/core/acp/production-acp-session-manager';
 import { projectManager } from '@main/core/projects/project-manager';
 import { killTmuxSession, makeTmuxSessionName } from '@main/core/pty/tmux-session-name';
+import { killZellijSessionsForPtySessionId } from '@main/core/pty/zellij-session';
 import { db } from '@main/db/client';
 import { conversations } from '@main/db/schema';
 import { telemetryService } from '@main/lib/telemetry';
@@ -62,10 +63,11 @@ export async function deleteConversation(
   } else {
     const project = projectManager.getProject(projectId);
     if (project) {
-      await killTmuxSession(
-        project.ctx,
-        makeTmuxSessionName(makePtySessionId(projectId, taskId, conversationId))
-      );
+      const sessionId = makePtySessionId(projectId, taskId, conversationId);
+      await Promise.all([
+        killTmuxSession(project.ctx, makeTmuxSessionName(sessionId)),
+        killZellijSessionsForPtySessionId(project.ctx, sessionId),
+      ]);
     }
   }
   telemetryService.capture('conversation_deleted', {

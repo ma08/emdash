@@ -2,10 +2,18 @@ import { Info } from 'lucide-react';
 import React from 'react';
 import { useAppSettingsKey } from '@renderer/features/settings/use-app-settings-key';
 import { useTaskSettings } from '@renderer/features/tasks/hooks/useTaskSettings';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@renderer/lib/ui/select';
 import { Switch } from '@renderer/lib/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import type { SessionMultiplexer } from '@shared/core/project-settings/project-settings';
 import { ResetToDefaultButton } from './ResetToDefaultButton';
 import { SettingRow } from './SettingRow';
+
+const SESSION_MULTIPLEXER_LABELS: Record<SessionMultiplexer, string> = {
+  none: 'None',
+  tmux: 'tmux',
+  zellij: 'Zellij',
+};
 
 function InfoTooltip({ label, content }: { label: string; content: React.ReactNode }) {
   return (
@@ -202,25 +210,48 @@ export const EnableTmuxRow: React.FC = () => {
     resetField,
   } = useAppSettingsKey('project');
 
-  const tmuxByDefault = projects?.tmuxByDefault ?? false;
+  const sessionMultiplexerByDefault: SessionMultiplexer =
+    projects?.sessionMultiplexerByDefault ?? (projects?.tmuxByDefault ? 'tmux' : 'none');
 
   return (
     <SettingRow
-      title="Enable tmux"
-      description="Run agent sessions and terminals in tmux sessions by default."
+      title="Session multiplexer"
+      description="Run agent sessions and terminals in a persistent multiplexer by default."
       control={
         <>
           <ResetToDefaultButton
-            visible={isFieldOverridden('tmuxByDefault')}
-            defaultLabel="off"
-            onReset={() => resetField('tmuxByDefault')}
+            visible={
+              isFieldOverridden('sessionMultiplexerByDefault') || isFieldOverridden('tmuxByDefault')
+            }
+            defaultLabel="None"
+            onReset={() => {
+              resetField('sessionMultiplexerByDefault');
+              resetField('tmuxByDefault');
+            }}
             disabled={loading || saving}
           />
-          <Switch
-            checked={tmuxByDefault}
+          <Select
+            value={sessionMultiplexerByDefault}
             disabled={loading || saving}
-            onCheckedChange={(checked) => update({ tmuxByDefault: checked })}
-          />
+            onValueChange={(value) => {
+              const sessionMultiplexer = value as SessionMultiplexer;
+              update({
+                sessionMultiplexerByDefault: sessionMultiplexer,
+                tmuxByDefault: sessionMultiplexer === 'tmux',
+              });
+            }}
+          >
+            <SelectTrigger className="w-36">
+              {SESSION_MULTIPLEXER_LABELS[sessionMultiplexerByDefault]}
+            </SelectTrigger>
+            <SelectContent align="end" alignItemWithTrigger={false} sideOffset={6}>
+              {Object.entries(SESSION_MULTIPLEXER_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value} className="py-2">
+                  <span className="relative -top-px shrink-0 font-medium">{label}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </>
       }
     />

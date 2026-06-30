@@ -1,3 +1,5 @@
+import type { MultiplexerSession } from '@shared/core/pty/session-multiplexer';
+
 export interface GeneralSession {
   type: 'general';
   config: GeneralSessionConfig;
@@ -8,7 +10,7 @@ export interface GeneralSessionConfig {
   cwd: string;
   projectPath?: string;
   shellSetup?: string;
-  tmuxSessionName?: string;
+  multiplexerSession?: MultiplexerSession;
   command?: string;
   args?: string[];
 }

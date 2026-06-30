@@ -18,7 +18,7 @@ function makeForm(overrides: Partial<FormState> = {}): FormState {
   return {
     preservePatterns: '',
     shellSetup: '',
-    tmux: false,
+    sessionMultiplexer: 'none',
     autoRunSetupScriptOnTaskCreation: true,
     autoRunRunScriptOnTaskCreation: false,
     scriptSetup: '',
@@ -66,7 +66,7 @@ describe('project settings form model', () => {
     expect(form).toEqual({
       preservePatterns: '.env\n.env.local',
       shellSetup: 'source .envrc',
-      tmux: true,
+      sessionMultiplexer: 'tmux',
       autoRunSetupScriptOnTaskCreation: false,
       autoRunRunScriptOnTaskCreation: true,
       scriptSetup: 'pnpm install',
@@ -107,7 +107,7 @@ describe('project settings form model', () => {
         makeForm({
           preservePatterns: ' .env \n\n.env.local ',
           shellSetup: 'source .envrc',
-          tmux: true,
+          sessionMultiplexer: 'zellij',
           autoRunSetupScriptOnTaskCreation: false,
           autoRunRunScriptOnTaskCreation: true,
           scriptRun: 'pnpm dev',
@@ -122,7 +122,8 @@ describe('project settings form model', () => {
     ).toEqual({
       preservePatterns: ['.env', '.env.local'],
       shellSetup: 'source .envrc',
-      tmux: true,
+      sessionMultiplexer: 'zellij',
+      tmux: false,
       autoRunSetupScriptOnTaskCreation: false,
       autoRunRunScriptOnTaskCreation: true,
       scripts: {
@@ -156,14 +157,19 @@ describe('project settings form model', () => {
 
   it('persists explicit GitHub account choices', () => {
     expect(formToSettings(makeForm({ githubAccountId: ' github.com:42 ' }))).toEqual({
+      sessionMultiplexer: 'none',
       tmux: false,
       githubAccountId: 'github.com:42',
     });
     expect(formToSettings(makeForm({ githubAccountId: null }))).toEqual({
+      sessionMultiplexer: 'none',
       tmux: false,
       githubAccountId: null,
     });
-    expect(formToSettings(makeForm({ githubAccountId: undefined }))).toEqual({ tmux: false });
+    expect(formToSettings(makeForm({ githubAccountId: undefined }))).toEqual({
+      sessionMultiplexer: 'none',
+      tmux: false,
+    });
   });
 
   it('omits default auto-run lifecycle settings from persisted form settings', () => {

@@ -4,11 +4,15 @@ import { wireTerminalUrlDetector } from '@main/core/preview-servers/terminal-url
 import { isUnexpectedPtyExit } from '@main/core/pty/exit-classification';
 import type { Pty } from '@main/core/pty/pty';
 import { ptySessionRegistry, type PtySessionMetadata } from '@main/core/pty/pty-session-registry';
+import {
+  killMultiplexerSessionTree,
+  killMultiplexerSessionsForPtySessionId,
+  makeMultiplexerSession,
+  type MultiplexerSession,
+} from '@main/core/pty/session-multiplexer';
 import { resolveSshCommand } from '@main/core/pty/spawn-utils';
 import { openSsh2Pty } from '@main/core/pty/ssh2-pty';
 import { getTerminalColorEnv } from '@main/core/pty/terminal-color-scheme';
-import { killTmuxSessionTree } from '@main/core/pty/tmux-reaper';
-import { makeTmuxSessionName } from '@main/core/pty/tmux-session-name';
 import { sshConnectionManager } from '@main/core/ssh/lifecycle/production-ssh-connection-manager';
 import type { SshClientProxy } from '@main/core/ssh/lifecycle/ssh-client-proxy';
 import type { SshConnectionManagerEvent } from '@main/core/ssh/lifecycle/ssh-connection-manager';
@@ -20,6 +24,10 @@ import {
   type TerminalSpawnOptions,
 } from '@main/core/terminals/terminal-provider';
 import { log } from '@main/lib/logger';
+import {
+  isPersistentSessionMultiplexer,
+  type SessionMultiplexer,
+} from '@shared/core/project-settings/project-settings';
 import { makePtySessionId } from '@shared/core/pty/ptySessionId';
 import type { GeneralSessionConfig } from '@shared/core/terminals/general-session';
 import type { TerminalShellId } from '@shared/core/terminals/terminal-settings';
@@ -49,7 +57,8 @@ export class SshTerminalProvider implements TerminalProvider {
   private readonly scopeId: string;
   private readonly taskPath: string;
   private readonly taskEnvVars: Record<string, string>;
-  private readonly tmux: boolean;
+  private readonly sessionMultiplexer: SessionMultiplexer;
+  private readonly persistentSessions = new Map<string, MultiplexerSession>();
   private readonly shellSetup?: string;
   private readonly ctx: IExecutionContext;
   private readonly proxy: SshClientProxy;
@@ -63,6 +72,7 @@ export class SshTerminalProvider implements TerminalProvider {
     taskPath,
     taskEnvVars = {},
     tmux = false,
+    sessionMultiplexer,
     shellSetup,
     ctx,
     proxy,
@@ -74,6 +84,7 @@ export class SshTerminalProvider implements TerminalProvider {
     taskPath: string;
     taskEnvVars?: Record<string, string>;
     tmux?: boolean;
+    sessionMultiplexer?: SessionMultiplexer;
     shellSetup?: string;
     ctx: IExecutionContext;
     proxy: SshClientProxy;
@@ -84,7 +95,7 @@ export class SshTerminalProvider implements TerminalProvider {
     this.scopeId = scopeId;
     this.taskPath = taskPath;
     this.taskEnvVars = taskEnvVars;
-    this.tmux = tmux;
+    this.sessionMultiplexer = sessionMultiplexer ?? (tmux ? 'tmux' : 'none');
     this.shellSetup = shellSetup;
     this.ctx = ctx;
     this.proxy = proxy;
@@ -101,6 +112,19 @@ export class SshTerminalProvider implements TerminalProvider {
       }
     };
     sshConnectionManager.on('connection-event', this._handleReconnect);
+  }
+
+  private makePersistentSession(
+    sessionId: string,
+    terminal: Terminal
+  ): MultiplexerSession | undefined {
+    if (!isPersistentSessionMultiplexer(this.sessionMultiplexer)) return undefined;
+    return makeMultiplexerSession(
+      this.sessionMultiplexer,
+      sessionId,
+      terminal.name || 'Terminal',
+      'terminal'
+    );
   }
 
   async spawnTerminal(
@@ -164,12 +188,13 @@ export class SshTerminalProvider implements TerminalProvider {
     if (policy.trackForRehydrate) {
       this.terminals.set(terminal.id, terminal);
     }
+    const multiplexerSession = this.makePersistentSession(sessionId, terminal);
 
     const cfg: GeneralSessionConfig = {
       taskId: this.scopeId,
       cwd: this.taskPath,
       shellSetup: shellSetup ?? this.shellSetup,
-      tmuxSessionName: this.tmux ? makeTmuxSessionName(sessionId) : undefined,
+      multiplexerSession,
       command: command?.command,
       args: command?.args,
     };
@@ -200,6 +225,11 @@ export class SshTerminalProvider implements TerminalProvider {
       throw new Error(result.error.message);
     }
     const pty = result.data;
+    if (multiplexerSession) {
+      this.persistentSessions.set(sessionId, multiplexerSession);
+    } else {
+      this.persistentSessions.delete(sessionId);
+    }
 
     if (policy.watchDevServer) {
       wireTerminalUrlDetector({
@@ -249,7 +279,7 @@ export class SshTerminalProvider implements TerminalProvider {
       if (!policy.preserveBufferOnExit) {
         ptySessionRegistry.unregister(sessionId, { pty, exitInfo: info });
       }
-      if (shouldRespawn && !this.tmux) {
+      if (shouldRespawn && !this.persistentSessions.has(sessionId)) {
         const count = (this.respawnCounts.get(sessionId) ?? 0) + 1;
         this.respawnCounts.set(sessionId, count);
 
@@ -346,22 +376,43 @@ export class SshTerminalProvider implements TerminalProvider {
     }
     this.terminals.delete(terminalId);
     this.shellProfiles.delete(sessionId);
-    if (this.tmux) {
-      await killTmuxSessionTree(this.ctx, makeTmuxSessionName(sessionId));
+    const multiplexerSession = this.persistentSessions.get(sessionId);
+    if (multiplexerSession) {
+      await killMultiplexerSessionTree(this.ctx, multiplexerSession);
+      this.persistentSessions.delete(sessionId);
+    } else if (isPersistentSessionMultiplexer(this.sessionMultiplexer)) {
+      await killMultiplexerSessionsForPtySessionId(this.ctx, this.sessionMultiplexer, sessionId, {
+        tree: true,
+      });
     }
   }
 
   async destroyAll(): Promise<void> {
     sshConnectionManager.off('connection-event', this._handleReconnect);
     const sessionIds = Array.from(this.knownSessionIds);
+    const multiplexerSessions = Array.from(this.persistentSessions.values());
+    const persistentMultiplexer = isPersistentSessionMultiplexer(this.sessionMultiplexer)
+      ? this.sessionMultiplexer
+      : undefined;
+    const fallbackSessionIds = persistentMultiplexer
+      ? sessionIds.filter((id) => !this.persistentSessions.has(id))
+      : [];
+    const fallbackKills = persistentMultiplexer
+      ? fallbackSessionIds.map((id) =>
+          killMultiplexerSessionsForPtySessionId(this.ctx, persistentMultiplexer, id, {
+            tree: true,
+          })
+        )
+      : [];
     await this.detachAll();
-    if (this.tmux) {
-      await Promise.all(
-        sessionIds.map((id) => killTmuxSessionTree(this.ctx, makeTmuxSessionName(id)))
-      );
-    }
+    await Promise.all(
+      multiplexerSessions
+        .map((session) => killMultiplexerSessionTree(this.ctx, session))
+        .concat(fallbackKills)
+    );
     this.knownSessionIds.clear();
     this.terminals.clear();
+    this.persistentSessions.clear();
     this.shellProfiles.clear();
   }
 

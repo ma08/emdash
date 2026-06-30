@@ -51,7 +51,7 @@ export async function buildTaskFromWorkspace(
   workspaceBranchName?: string,
   workspaceSourceBranch?: GitBranchRef
 ): Promise<BuildTaskResult> {
-  const { taskEnvVars, tmuxEnabled, shellSetup } = await resolveTaskEnv(
+  const { taskEnvVars, sessionMultiplexer, shellSetup } = await resolveTaskEnv(
     task,
     workspace,
     projectPath,
@@ -64,7 +64,7 @@ export async function buildTaskFromWorkspace(
       taskId: task.id,
       workspaceId: workspace.id,
       taskPath: workspace.path,
-      tmuxEnabled,
+      sessionMultiplexer,
       shellSetup,
       taskEnvVars,
     });
