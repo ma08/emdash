@@ -1,4 +1,5 @@
 import type { AgentProviderId } from '@shared/core/agents/agent-provider-registry';
+import type { MultiplexerSession } from '@shared/core/pty/session-multiplexer';
 
 export interface AgentSessionConfig {
   taskId: string;
@@ -9,7 +10,7 @@ export interface AgentSessionConfig {
   cwd: string;
   sessionId?: string;
   shellSetup?: string;
-  tmuxSessionName?: string;
+  multiplexerSession?: MultiplexerSession;
   autoApprove: boolean;
   resume: boolean;
 }

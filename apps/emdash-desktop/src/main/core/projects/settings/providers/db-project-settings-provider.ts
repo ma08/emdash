@@ -8,10 +8,12 @@ import {
   DEFAULT_PRESERVE_PATTERNS,
   legacyBaseProjectSettingsSchema,
   projectSettingsSchema,
+  resolveDefaultSessionMultiplexer,
   shareableProjectSettingsSchema,
   type BaseProjectSettings,
   type ProjectSettings,
   type ShareableProjectSettings,
+  withSessionMultiplexerCompatibility,
 } from '@shared/core/project-settings/project-settings';
 import { SHAREABLE_FIELD_ACCESSORS } from '@shared/core/project-settings/project-settings-fields';
 import type { UpdateProjectSettingsError } from '@shared/projects';
@@ -54,10 +56,12 @@ export abstract class DbProjectSettingsProvider implements ProjectSettingsProvid
   protected async initialBaseProjectSettings(): Promise<BaseProjectSettings> {
     const defaultBranch = this.defaultBranchFallback.trim() || 'main';
     const projectDefaults = await appSettingsService.get('project');
+    const sessionMultiplexer = resolveDefaultSessionMultiplexer(projectDefaults);
     return {
       defaultBranch,
       baseRemote: remoteNameFromQualifiedRef(defaultBranch) ?? 'origin',
-      tmux: projectDefaults.tmuxByDefault,
+      sessionMultiplexer,
+      tmux: sessionMultiplexer === 'tmux',
     };
   }
 
@@ -115,10 +119,12 @@ export abstract class DbProjectSettingsProvider implements ProjectSettingsProvid
     const { remote, ...canonicalBaseSettings } = baseSettings;
 
     return {
-      base: baseProjectSettingsSchema.parse({
-        ...canonicalBaseSettings,
-        baseRemote: canonicalBaseSettings.baseRemote ?? remote,
-      }),
+      base: withSessionMultiplexerCompatibility(
+        baseProjectSettingsSchema.parse({
+          ...canonicalBaseSettings,
+          baseRemote: canonicalBaseSettings.baseRemote ?? remote,
+        })
+      ),
       shareable: readJson(
         row.shareableProjectSettingsJson,
         shareableProjectSettingsSchema,
@@ -181,7 +187,7 @@ export abstract class DbProjectSettingsProvider implements ProjectSettingsProvid
     }
     nextSettings.worktreeDirectory = worktreeDirectoryResult.data;
 
-    const base = baseProjectSettingsSchema.parse(nextSettings);
+    const base = withSessionMultiplexerCompatibility(baseProjectSettingsSchema.parse(nextSettings));
     const shareable = shareableProjectSettingsSchema.parse(nextSettings);
 
     try {
@@ -223,12 +229,14 @@ export abstract class DbProjectSettingsProvider implements ProjectSettingsProvid
         SHAREABLE_FIELD_ACCESSORS[field].clear(shareable);
       }
 
-      const nextBase = baseProjectSettingsSchema.parse({
-        ...base,
-        ...(Object.hasOwn(patch, 'githubAccountId')
-          ? { githubAccountId: patch.githubAccountId }
-          : {}),
-      });
+      const nextBase = withSessionMultiplexerCompatibility(
+        baseProjectSettingsSchema.parse({
+          ...base,
+          ...(Object.hasOwn(patch, 'githubAccountId')
+            ? { githubAccountId: patch.githubAccountId }
+            : {}),
+        })
+      );
 
       await this.storage.update(this.projectId, {
         baseProjectSettingsJson: JSON.stringify(compactUndefined(nextBase)),

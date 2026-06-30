@@ -17,7 +17,7 @@ import {
   terminalInteractiveShellArgs,
   terminalShellBasename,
 } from '@shared/core/terminals/terminal-settings';
-import { buildTmuxShellLine } from './tmux-session-name';
+import { buildMultiplexerShellLine } from './session-multiplexer';
 
 export type SessionType = 'agent' | 'general';
 export type SessionConfig = AgentSessionConfig | GeneralSessionConfig;
@@ -29,6 +29,7 @@ function posixShellLineForSsh(
 ): { cwd: string; line: string } {
   const shell = profile.executable;
   const quoteArg = isCshShell(shell) ? quoteCshArg : quoteShellArg;
+  const multiplexerShellArgs = zellijSetupWrapperArgs(profile);
 
   switch (type) {
     case 'agent': {
@@ -37,7 +38,12 @@ function posixShellLineForSsh(
       const line = cfg.shellSetup ? `${cfg.shellSetup} && ${baseCmd}` : baseCmd;
       return {
         cwd: cfg.cwd,
-        line: cfg.tmuxSessionName ? buildTmuxShellLine(cfg.tmuxSessionName, line) : line,
+        line: cfg.multiplexerSession
+          ? buildMultiplexerShellLine(cfg.multiplexerSession, line, cfg.cwd, {
+              shellCommand: shell,
+              shellArgs: multiplexerShellArgs,
+            })
+          : line,
       };
     }
     case 'general': {
@@ -48,11 +54,28 @@ function posixShellLineForSsh(
       const line = cfg.shellSetup ? `${cfg.shellSetup} && ${baseCmd}` : baseCmd;
       return {
         cwd: cfg.cwd,
-        line: cfg.tmuxSessionName ? buildTmuxShellLine(cfg.tmuxSessionName, line) : line,
+        line: cfg.multiplexerSession
+          ? buildMultiplexerShellLine(cfg.multiplexerSession, line, cfg.cwd, {
+              shellCommand: shell,
+              shellArgs: multiplexerShellArgs,
+            })
+          : line,
       };
     }
     default:
       throw new Error(`Unsupported session type: ${type}`);
+  }
+}
+
+function zellijSetupWrapperArgs(profile: ResolvedShellProfile): string[] {
+  switch (profile.family) {
+    case 'posix':
+    case 'csh':
+      return ['-c'];
+    case 'windows-cmd':
+    case 'powershell':
+    case 'wsl':
+      return profile.commandArgs;
   }
 }
 

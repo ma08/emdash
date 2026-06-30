@@ -254,7 +254,11 @@ describe('ProjectSettingsProvider worktreeDirectory validation', () => {
     const provider = new LocalProjectSettingsProvider(projectId(), projectPath, 'main');
 
     await expect(provider.get()).resolves.toMatchObject({ baseRemote: 'upstream' });
-    expect(JSON.parse(row.baseProjectSettingsJson)).toEqual({ baseRemote: 'upstream' });
+    expect(JSON.parse(row.baseProjectSettingsJson)).toEqual({
+      baseRemote: 'upstream',
+      sessionMultiplexer: 'none',
+      tmux: false,
+    });
   });
 
   it('keeps computed worktreeDirectory default separate from configured overrides', async () => {
@@ -333,6 +337,7 @@ describe('ProjectSettingsProvider worktreeDirectory validation', () => {
       defaultBranch: 'develop',
       baseRemote: 'upstream',
       githubAccountId: 'github.com:42',
+      sessionMultiplexer: 'tmux',
       tmux: true,
     });
     await expect(provider.get()).resolves.toMatchObject({
@@ -340,6 +345,7 @@ describe('ProjectSettingsProvider worktreeDirectory validation', () => {
       baseRemote: 'upstream',
       githubAccountId: 'github.com:42',
       preservePatterns: ['.env.local'],
+      sessionMultiplexer: 'tmux',
       tmux: true,
     });
   });

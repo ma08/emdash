@@ -18,8 +18,13 @@ import type { Pty } from '@main/core/pty/pty';
 import { buildAgentEnv } from '@main/core/pty/pty-env';
 import { ptySessionRegistry } from '@main/core/pty/pty-session-registry';
 import { logLocalPtySpawnWarnings, resolveLocalPtySpawn } from '@main/core/pty/pty-spawn-platform';
+import {
+  killMultiplexerSession,
+  killMultiplexerSessionsForPtySessionId,
+  makeMultiplexerSession,
+  type MultiplexerSession,
+} from '@main/core/pty/session-multiplexer';
 import { getTerminalColorEnv } from '@main/core/pty/terminal-color-scheme';
-import { killTmuxSession, makeTmuxSessionName } from '@main/core/pty/tmux-session-name';
 import { providerOverrideSettings } from '@main/core/settings/provider-settings-service';
 import type { ResolvedShellProfile } from '@main/core/terminal-shell/types';
 import { events } from '@main/lib/events';
@@ -27,6 +32,10 @@ import { log } from '@main/lib/logger';
 import { telemetryService } from '@main/lib/telemetry';
 import { agentSessionExitedChannel } from '@shared/core/agents/agentEvents';
 import type { Conversation } from '@shared/core/conversations/conversations';
+import {
+  isPersistentSessionMultiplexer,
+  type SessionMultiplexer,
+} from '@shared/core/project-settings/project-settings';
 import { makePtyId } from '@shared/core/pty/ptyId';
 import { makePtySessionId } from '@shared/core/pty/ptySessionId';
 import { scheduleInitialPromptInjection } from './keystroke-injection';
@@ -48,7 +57,8 @@ export class LocalConversationProvider implements ConversationProvider {
   private readonly projectId: string;
   private readonly taskPath: string;
   private readonly taskId: string;
-  private readonly tmux: boolean;
+  private readonly sessionMultiplexer: SessionMultiplexer;
+  private readonly persistentSessions = new Map<string, MultiplexerSession>();
   private readonly shellSetup?: string;
   private readonly shellProfile: ResolvedShellProfile;
   private readonly ctx: IExecutionContext;
@@ -58,6 +68,7 @@ export class LocalConversationProvider implements ConversationProvider {
     taskPath,
     taskId,
     tmux = false,
+    sessionMultiplexer,
     shellSetup,
     shellProfile,
     ctx,
@@ -67,6 +78,7 @@ export class LocalConversationProvider implements ConversationProvider {
     taskPath: string;
     taskId: string;
     tmux?: boolean;
+    sessionMultiplexer?: SessionMultiplexer;
     shellSetup?: string;
     shellProfile: ResolvedShellProfile;
     ctx: IExecutionContext;
@@ -75,11 +87,24 @@ export class LocalConversationProvider implements ConversationProvider {
     this.projectId = projectId;
     this.taskPath = taskPath;
     this.taskId = taskId;
-    this.tmux = tmux;
+    this.sessionMultiplexer = sessionMultiplexer ?? (tmux ? 'tmux' : 'none');
     this.shellSetup = shellSetup;
     this.shellProfile = shellProfile;
     this.ctx = ctx;
     this.taskEnvVars = taskEnvVars;
+  }
+
+  private makePersistentSession(
+    sessionId: string,
+    conversation: Conversation
+  ): MultiplexerSession | undefined {
+    if (!isPersistentSessionMultiplexer(this.sessionMultiplexer)) return undefined;
+    return makeMultiplexerSession(
+      this.sessionMultiplexer,
+      sessionId,
+      conversation.title || conversation.providerId,
+      conversation.providerId
+    );
   }
 
   async startSession(
@@ -165,7 +190,7 @@ export class LocalConversationProvider implements ConversationProvider {
       const customEnv = providerConfig?.env ?? {};
       const providerVars: Record<string, string> = { ...agentCommand.env, ...customEnv };
 
-      const tmuxSessionName = this.tmux ? makeTmuxSessionName(sessionId) : undefined;
+      const multiplexerSession = this.makePersistentSession(sessionId, conversation);
 
       const resolved = resolveLocalPtySpawn({
         platform: process.platform,
@@ -176,7 +201,7 @@ export class LocalConversationProvider implements ConversationProvider {
           command: { kind: 'argv', command: agentCommand.command, args: agentCommand.args },
           shellProfile: this.shellProfile,
           shellSetup: this.shellSetup,
-          tmuxSessionName,
+          multiplexerSession,
         },
       });
 
@@ -206,6 +231,11 @@ export class LocalConversationProvider implements ConversationProvider {
         cols: spawnSize.cols,
         rows: spawnSize.rows,
       });
+      if (resolved.multiplexerSession) {
+        this.persistentSessions.set(sessionId, resolved.multiplexerSession);
+      } else {
+        this.persistentSessions.delete(sessionId);
+      }
 
       pty.onExit((info) => {
         // The spilled context file is only needed while this process runs.
@@ -223,7 +253,7 @@ export class LocalConversationProvider implements ConversationProvider {
           taskId: conversation.taskId,
         });
 
-        if (this.tmux) {
+        if (this.persistentSessions.has(sessionId)) {
           return;
         }
 
@@ -243,6 +273,7 @@ export class LocalConversationProvider implements ConversationProvider {
         if (ptySessionRegistry.get(sessionId) === pty) {
           ptySessionRegistry.unregister(sessionId);
         }
+        this.persistentSessions.delete(sessionId);
         return;
       }
 
@@ -292,7 +323,7 @@ export class LocalConversationProvider implements ConversationProvider {
   async detachSession(conversationId: string): Promise<void> {
     const sessionId = makePtySessionId(this.projectId, this.taskId, conversationId);
     this.detachPty(sessionId);
-    if (!this.tmux) {
+    if (!this.persistentSessions.has(sessionId)) {
       this.knownSessionIds.delete(sessionId);
       this.supervisor.forget(sessionId);
     }
@@ -301,6 +332,7 @@ export class LocalConversationProvider implements ConversationProvider {
   async stopSession(conversationId: string): Promise<void> {
     const sessionId = makePtySessionId(this.projectId, this.taskId, conversationId);
     this.knownSessionIds.delete(sessionId);
+    const multiplexerSession = this.persistentSessions.get(sessionId);
     const pty = this.supervisor.stop(sessionId) ?? this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
     ptySessionRegistry.unregister(sessionId);
@@ -314,22 +346,40 @@ export class LocalConversationProvider implements ConversationProvider {
         });
       }
     }
-    if (this.tmux) {
-      await killTmuxSession(this.ctx, makeTmuxSessionName(sessionId));
+    if (multiplexerSession) {
+      await killMultiplexerSession(this.ctx, multiplexerSession);
+      this.persistentSessions.delete(sessionId);
+    } else if (isPersistentSessionMultiplexer(this.sessionMultiplexer)) {
+      await killMultiplexerSessionsForPtySessionId(this.ctx, this.sessionMultiplexer, sessionId);
     }
     this.supervisor.forget(sessionId);
   }
 
   async destroyAll(): Promise<void> {
     const sessionIds = Array.from(this.knownSessionIds);
+    const multiplexerSessions = Array.from(this.persistentSessions.values());
+    const persistentMultiplexer = isPersistentSessionMultiplexer(this.sessionMultiplexer)
+      ? this.sessionMultiplexer
+      : undefined;
+    const fallbackSessionIds = persistentMultiplexer
+      ? sessionIds.filter((id) => !this.persistentSessions.has(id))
+      : [];
+    const fallbackKills = persistentMultiplexer
+      ? fallbackSessionIds.map((id) =>
+          killMultiplexerSessionsForPtySessionId(this.ctx, persistentMultiplexer, id)
+        )
+      : [];
     await this.detachAll();
-    if (this.tmux) {
-      await Promise.all(sessionIds.map((id) => killTmuxSession(this.ctx, makeTmuxSessionName(id))));
-    }
+    await Promise.all(
+      multiplexerSessions
+        .map((session) => killMultiplexerSession(this.ctx, session))
+        .concat(fallbackKills)
+    );
     for (const sessionId of sessionIds) {
       this.supervisor.forget(sessionId);
     }
     this.knownSessionIds.clear();
+    this.persistentSessions.clear();
   }
 
   async detachAll(): Promise<void> {

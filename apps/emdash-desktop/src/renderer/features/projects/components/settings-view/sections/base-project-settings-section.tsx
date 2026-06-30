@@ -17,7 +17,6 @@ import { Field, FieldDescription, FieldTitle } from '@renderer/lib/ui/field';
 import { Input } from '@renderer/lib/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@renderer/lib/ui/select';
 import { Separator } from '@renderer/lib/ui/separator';
-import { Switch } from '@renderer/lib/ui/switch';
 import { cn } from '@renderer/utils/utils';
 import type { Project } from '@shared/projects';
 import type { FormState, FormUpdate } from '../project-settings-form-model';
@@ -27,6 +26,12 @@ import {
 } from './project-github-account-select-state';
 
 const SAME_AS_BASE_REMOTE = '__same_as_base_remote__';
+
+const SESSION_MULTIPLEXER_LABELS: Record<FormState['sessionMultiplexer'], string> = {
+  none: 'None',
+  tmux: 'tmux',
+  zellij: 'Zellij',
+};
 
 type BaseProjectSettingsSectionProps = {
   projectId: string;
@@ -232,12 +237,28 @@ export function BaseProjectSettingsSection({
 
       <Field orientation="horizontal">
         <div className="flex flex-1 flex-col gap-1">
-          <FieldTitle>Enable tmux</FieldTitle>
+          <FieldTitle>Session multiplexer</FieldTitle>
           <FieldDescription className="text-foreground-muted">
-            Run the agent session inside a tmux session.
+            Run agent sessions and terminals inside a persistent multiplexer.
           </FieldDescription>
         </div>
-        <Switch checked={form.tmux} onCheckedChange={(checked) => update('tmux', checked)} />
+        <Select
+          value={form.sessionMultiplexer}
+          onValueChange={(value) =>
+            update('sessionMultiplexer', value as FormState['sessionMultiplexer'])
+          }
+        >
+          <SelectTrigger className="w-36">
+            {SESSION_MULTIPLEXER_LABELS[form.sessionMultiplexer]}
+          </SelectTrigger>
+          <SelectContent align="end" alignItemWithTrigger={false} sideOffset={6}>
+            {Object.entries(SESSION_MULTIPLEXER_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value} className="py-2">
+                <span className="relative -top-px shrink-0 font-medium">{label}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </Field>
     </>
   );

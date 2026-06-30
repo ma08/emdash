@@ -25,6 +25,10 @@ import { handleGitWorktreeUpdate } from '@main/core/workspaces/workspace-worktre
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { gitWorktreeUpdateChannel } from '@shared/core/git/events';
+import {
+  resolveSessionMultiplexer,
+  type SessionMultiplexer,
+} from '@shared/core/project-settings/project-settings';
 import type { Task } from '@shared/core/tasks/tasks';
 import { getEffectiveTaskSettings } from '../projects/settings/effective-task-settings';
 import type { ProjectSettingsProvider } from '../projects/settings/provider';
@@ -91,7 +95,7 @@ export function createWorkspaceFactory(
       defaultBranch,
       portSeed: workDir,
     });
-    const tmuxEnabled = projectSettings.tmux ?? false;
+    const sessionMultiplexer = resolveSessionMultiplexer(projectSettings);
     const taskLevelSettings = await getEffectiveTaskSettings({
       projectSettings: context.settings,
       taskFs: workspaceFs,
@@ -107,7 +111,7 @@ export function createWorkspaceFactory(
             workspaceId,
             scopeId: workspaceId,
             taskPath: workDir,
-            tmux: tmuxEnabled,
+            sessionMultiplexer,
             shellSetup,
             ctx,
             proxy: type.proxy,
@@ -119,7 +123,7 @@ export function createWorkspaceFactory(
             workspaceId,
             scopeId: workspaceId,
             taskPath: workDir,
-            tmux: tmuxEnabled,
+            sessionMultiplexer,
             shellSetup,
             ctx,
             taskEnvVars: bootstrapTaskEnvVars,
@@ -278,7 +282,7 @@ type TaskProviderOpts = {
   taskId: string;
   workspaceId: string;
   taskPath: string;
-  tmuxEnabled: boolean;
+  sessionMultiplexer: SessionMultiplexer;
   shellSetup?: string;
   taskEnvVars: Record<string, string>;
 };
@@ -314,7 +318,7 @@ export async function buildTaskProviders(
         projectId: opts.projectId,
         taskPath: opts.taskPath,
         taskId: opts.taskId,
-        tmux: opts.tmuxEnabled,
+        sessionMultiplexer: opts.sessionMultiplexer,
         shellSetup: opts.shellSetup,
         ctx,
         proxy: type.proxy,
@@ -325,7 +329,7 @@ export async function buildTaskProviders(
         workspaceId: opts.workspaceId,
         scopeId: opts.taskId,
         taskPath: opts.taskPath,
-        tmux: opts.tmuxEnabled,
+        sessionMultiplexer: opts.sessionMultiplexer,
         shellSetup: opts.shellSetup,
         ctx,
         proxy: type.proxy,
@@ -342,7 +346,7 @@ export async function buildTaskProviders(
       projectId: opts.projectId,
       taskPath: opts.taskPath,
       taskId: opts.taskId,
-      tmux: opts.tmuxEnabled,
+      sessionMultiplexer: opts.sessionMultiplexer,
       shellSetup: opts.shellSetup,
       shellProfile: conversationShellProfile,
       ctx,
@@ -353,7 +357,7 @@ export async function buildTaskProviders(
       workspaceId: opts.workspaceId,
       scopeId: opts.taskId,
       taskPath: opts.taskPath,
-      tmux: opts.tmuxEnabled,
+      sessionMultiplexer: opts.sessionMultiplexer,
       shellSetup: opts.shellSetup,
       ctx,
       taskEnvVars: opts.taskEnvVars,
@@ -372,7 +376,7 @@ export async function resolveTaskEnv(
   settings: ProjectSettingsProvider
 ): Promise<{
   taskEnvVars: Record<string, string>;
-  tmuxEnabled: boolean;
+  sessionMultiplexer: SessionMultiplexer;
   shellSetup?: string;
 }> {
   const projectSettings = await settings.get();
@@ -390,7 +394,7 @@ export async function resolveTaskEnv(
       defaultBranch,
       portSeed: workspace.path,
     }),
-    tmuxEnabled: projectSettings.tmux ?? false,
+    sessionMultiplexer: resolveSessionMultiplexer(projectSettings),
     shellSetup: taskLevelSettings.shellSetup ?? projectSettings.shellSetup,
   };
 }

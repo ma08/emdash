@@ -2,6 +2,7 @@ import { LifecycleMap } from '@emdash/shared';
 import { ok, type Result } from '@emdash/shared';
 import type { IExecutionContext } from '@main/core/execution-context/types';
 import { killTmuxSession, makeTmuxSessionName } from '@main/core/pty/tmux-session-name';
+import { killZellijSessionsForPtySessionId } from '@main/core/pty/zellij-session';
 import { getTaskSessionLeafIds } from '@main/core/tasks/session-targets';
 import type { WorkspaceBootstrapResult } from '@main/core/workspaces/workspace-bootstrap-service';
 import { workspaceRegistry, type TeardownMode } from '@main/core/workspaces/workspace-registry';
@@ -52,14 +53,14 @@ export type TaskManagerHooks = {
  * Task-level teardown intent. Wider than {@link TeardownMode} because archive needs to
  * reap the running agent like `terminate` while keeping the workspace like `detach`:
  *
- * - `detach`: leave tmux sessions and agent processes running so the task can be
- *   remounted later (used on app/project shutdown when tmux is enabled).
- * - `terminate`: reap tmux sessions + agent processes and destroy the workspace
+ * - `detach`: leave persistent multiplexer sessions and agent processes running so
+ *   the task can be remounted later (used on app/project shutdown when enabled).
+ * - `terminate`: reap persistent multiplexer sessions + agent processes and destroy the workspace
  *   (worktree removal, teardown script). Used by delete.
- * - `archive`: reap tmux sessions + agent processes like `terminate`, but keep the
+ * - `archive`: reap persistent multiplexer sessions + agent processes like `terminate`, but keep the
  *   workspace/worktree (and the persisted `conversations.session_id`) so the task stays
- *   restorable. Without this, archiving a tmux-backed task leaked its session and agent
- *   process indefinitely (#2689).
+ *   restorable. Without this, archiving a persistent-session-backed task leaked its
+ *   session and agent process indefinitely (#2689).
  */
 export type TaskTeardownMode = TeardownMode | 'archive';
 
@@ -69,11 +70,11 @@ export async function executeTeardown(
   mode: TaskTeardownMode
 ): Promise<void> {
   if (mode === 'detach') {
-    // Keep the tmux sessions and agent processes alive for a later remount.
+    // Keep persistent multiplexer sessions and agent processes alive for a later remount.
     await task.conversations.detachAll();
     await task.terminals.detachAll();
   } else {
-    // 'terminate' and 'archive' both reap the tmux sessions and agent processes.
+    // 'terminate' and 'archive' both reap persistent multiplexer sessions and agent processes.
     await task.conversations.destroyAll();
     await task.terminals.destroyAll();
   }
@@ -92,7 +93,10 @@ async function cleanupDetachedSessions(
     makePtySessionId(projectId, taskId, leafId)
   );
   await Promise.all(
-    sessionIds.map((sessionId) => killTmuxSession(ctx, makeTmuxSessionName(sessionId)))
+    sessionIds.flatMap((sessionId) => [
+      killTmuxSession(ctx, makeTmuxSessionName(sessionId)),
+      killZellijSessionsForPtySessionId(ctx, sessionId),
+    ])
   );
 }
 

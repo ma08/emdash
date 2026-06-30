@@ -9,6 +9,7 @@ import {
   shareableProjectSettingsSchema,
   type BaseProjectSettings,
   type ShareableProjectSettings,
+  withSessionMultiplexerCompatibility,
 } from '@shared/core/project-settings/project-settings';
 import { mergeShareableProjectSettings } from '@shared/core/project-settings/project-settings-fields';
 import type { UpdateProjectSettingsError } from '@shared/projects';
@@ -101,10 +102,12 @@ export async function migrateLegacyProjectSettingsIfNeeded({
   );
   const { remote, ...currentSettings } = current;
   const legacy = await readLegacyProjectConfig(configReader);
-  const next: BaseProjectSettings = baseProjectSettingsSchema.parse({
-    ...currentSettings,
-    baseRemote: currentSettings.baseRemote ?? remote,
-  });
+  const next: BaseProjectSettings = withSessionMultiplexerCompatibility(
+    baseProjectSettingsSchema.parse({
+      ...currentSettings,
+      baseRemote: currentSettings.baseRemote ?? remote,
+    })
+  );
   let nextShareable: ShareableProjectSettings | undefined;
 
   if (legacy && !baseAlreadyMigrated) {
@@ -122,7 +125,14 @@ export async function migrateLegacyProjectSettingsIfNeeded({
         defaultBranchFallback
       );
     }
-    if (legacy.tmux !== undefined) next.tmux = legacy.tmux;
+    if (legacy.tmux !== undefined && legacy.sessionMultiplexer === undefined) {
+      next.sessionMultiplexer = legacy.tmux ? 'tmux' : 'none';
+      next.tmux = legacy.tmux;
+    }
+    if (legacy.sessionMultiplexer !== undefined) {
+      next.sessionMultiplexer = legacy.sessionMultiplexer;
+      next.tmux = legacy.sessionMultiplexer === 'tmux';
+    }
     if (legacy.workspaceProvider !== undefined) {
       next.workspaceProvider = legacy.workspaceProvider;
     }

@@ -4,7 +4,7 @@ import type { ResolvedShellProfile } from '@main/core/terminal-shell/types';
 import { log } from '@main/lib/logger';
 import { quoteCshArg } from '@main/utils/shellEscape';
 import { getWindowsEnvValue } from '@main/utils/windows-env';
-import { buildTmuxShellLine } from './tmux-session-name';
+import { buildMultiplexerShellLine, type MultiplexerSession } from './session-multiplexer';
 
 export type PtyCommandSpec =
   | { kind: 'argv'; command: string; args: string[] }
@@ -16,7 +16,7 @@ export type PtySpawnIntent =
       cwd: string;
       shellProfile?: ResolvedShellProfile;
       shellSetup?: string;
-      tmuxSessionName?: string;
+      multiplexerSession?: MultiplexerSession;
     }
   | {
       kind: 'run-command';
@@ -24,16 +24,20 @@ export type PtySpawnIntent =
       command: PtyCommandSpec;
       shellProfile?: ResolvedShellProfile;
       shellSetup?: string;
-      tmuxSessionName?: string;
+      multiplexerSession?: MultiplexerSession;
     };
 
-export type LocalPtySpawnWarning = 'shell_setup_ignored_on_windows' | 'tmux_unsupported_on_windows';
+export type LocalPtySpawnWarning =
+  | 'shell_setup_ignored_on_windows'
+  | 'tmux_unsupported_on_windows'
+  | 'zellij_unsupported_on_windows';
 
 export type ResolvedLocalPtySpawn = {
   command: string;
   args: string[];
   cwd: string;
   warnings: LocalPtySpawnWarning[];
+  multiplexerSession?: MultiplexerSession;
 };
 
 type FileExists = (candidate: string) => boolean;
@@ -192,7 +196,8 @@ function resolveWindowsCommandPath({
 function windowsWarnings(intent: PtySpawnIntent): LocalPtySpawnWarning[] {
   const warnings: LocalPtySpawnWarning[] = [];
   if (intent.shellSetup) warnings.push('shell_setup_ignored_on_windows');
-  if (intent.tmuxSessionName) warnings.push('tmux_unsupported_on_windows');
+  if (intent.multiplexerSession?.kind === 'tmux') warnings.push('tmux_unsupported_on_windows');
+  if (intent.multiplexerSession?.kind === 'zellij') warnings.push('zellij_unsupported_on_windows');
   return warnings;
 }
 
@@ -350,7 +355,7 @@ function resolvePosixSpawn(intent: PtySpawnIntent, env: NodeJS.ProcessEnv): Reso
   const setupWrapperArgs = getSetupWrapperArgs(intent);
 
   if (intent.kind === 'interactive-shell') {
-    if (intent.tmuxSessionName) {
+    if (intent.multiplexerSession) {
       const commandLine = intent.shellSetup
         ? `${intent.shellSetup} && exec ${quotePosixArg(shell)} ${interactiveArgs.join(' ')}`
         : `exec ${quotePosixArg(shell)} ${interactiveArgs.join(' ')}`;
@@ -358,10 +363,14 @@ function resolvePosixSpawn(intent: PtySpawnIntent, env: NodeJS.ProcessEnv): Reso
         command: shell,
         args: [
           ...(intent.shellSetup ? setupWrapperArgs : commandArgs),
-          buildTmuxShellLine(intent.tmuxSessionName, commandLine),
+          buildMultiplexerShellLine(intent.multiplexerSession, commandLine, intent.cwd, {
+            shellCommand: shell,
+            shellArgs: setupWrapperArgs,
+          }),
         ],
         cwd: intent.cwd,
         warnings: [],
+        multiplexerSession: intent.multiplexerSession,
       };
     }
 
@@ -398,12 +407,19 @@ function resolvePosixSpawn(intent: PtySpawnIntent, env: NodeJS.ProcessEnv): Reso
     ? `${intent.shellSetup} && ${commandLine}`
     : commandLine;
 
-  if (intent.tmuxSessionName) {
+  if (intent.multiplexerSession) {
     return {
       command: shell,
-      args: [...commandArgs, buildTmuxShellLine(intent.tmuxSessionName, fullCommandLine)],
+      args: [
+        ...commandArgs,
+        buildMultiplexerShellLine(intent.multiplexerSession, fullCommandLine, intent.cwd, {
+          shellCommand: shell,
+          shellArgs: setupWrapperArgs,
+        }),
+      ],
       cwd: intent.cwd,
       warnings: [],
+      multiplexerSession: intent.multiplexerSession,
     };
   }
 

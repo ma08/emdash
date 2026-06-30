@@ -401,7 +401,7 @@ describe('resolveLocalPtySpawn - Windows', () => {
         kind: 'interactive-shell',
         cwd: 'C:\\repo',
         shellSetup: 'source ~/.nvm/nvm.sh',
-        tmuxSessionName: 'session-1',
+        multiplexerSession: { kind: 'tmux', sessionName: 'session-1' },
       },
     });
 
@@ -409,6 +409,20 @@ describe('resolveLocalPtySpawn - Windows', () => {
       'shell_setup_ignored_on_windows',
       'tmux_unsupported_on_windows',
     ]);
+  });
+
+  it('returns warnings for ignored zellij on Windows', () => {
+    const result = resolveLocalPtySpawn({
+      platform: 'win32',
+      env: winEnv,
+      intent: {
+        kind: 'interactive-shell',
+        cwd: 'C:\\repo',
+        multiplexerSession: { kind: 'zellij', sessionName: 'session-1' },
+      },
+    });
+
+    expect(result.warnings).toEqual(['zellij_unsupported_on_windows']);
   });
 });
 
@@ -637,5 +651,57 @@ describe('resolveLocalPtySpawn - POSIX', () => {
       cwd: '/repo',
       warnings: [],
     });
+  });
+
+  it('wraps interactive shells in zellij sessions', () => {
+    const multiplexerSession = {
+      kind: 'zellij' as const,
+      sessionName: 'emdash-terminal.cHJvai0xOnRhc2stMTp0ZXJtLTE',
+      displayName: 'Dev Server',
+    };
+    const result = resolveLocalPtySpawn({
+      platform: 'linux',
+      env: posixEnv,
+      intent: {
+        kind: 'interactive-shell',
+        cwd: '/repo',
+        shellProfile: bashProfile,
+        multiplexerSession,
+      },
+    });
+
+    expect(result.command).toBe('bash');
+    expect(result.args[0]).toBe('-lc');
+    expect(result.args[1]).toContain('zellij attach --create-background "$session"');
+    expect(result.args[1]).toContain('tab name="Dev Server"');
+    expect(result.args[1]).toContain('pane command="/bin/sh"');
+    expect(result.args[1]).toContain('cwd="/repo"');
+    expect(result.args[1]).toContain('bash');
+    expect(result.args[1]).toContain('exec bash -il');
+    expect(result.multiplexerSession).toEqual(multiplexerSession);
+  });
+
+  it('runs zellij shell setup through the selected shell profile', () => {
+    const result = resolveLocalPtySpawn({
+      platform: 'linux',
+      env: posixEnv,
+      intent: {
+        kind: 'interactive-shell',
+        cwd: '/repo',
+        shellProfile: bashProfile,
+        shellSetup: 'source ~/.nvm/nvm.sh',
+        multiplexerSession: {
+          kind: 'zellij',
+          sessionName: 'emdash-terminal.cHJvai0xOnRhc2stMTp0ZXJtLTE',
+        },
+      },
+    });
+
+    expect(result.command).toBe('bash');
+    expect(result.args[0]).toBe('-c');
+    expect(result.args[1]).toContain('pane command="/bin/sh"');
+    expect(result.args[1]).toContain('bash');
+    expect(result.args[1]).toContain('-c');
+    expect(result.args[1]).toContain('source ~/.nvm/nvm.sh && exec bash -il');
   });
 });
