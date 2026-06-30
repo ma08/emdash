@@ -83,7 +83,7 @@ describe('makeZellijSessionName', () => {
 });
 
 describe('buildZellijShellLine', () => {
-  it('creates a POSIX wrapper that creates in background then attaches', () => {
+  it('creates a POSIX wrapper that creates fresh sessions in the foreground', () => {
     const result = buildZellijShellLine(
       'emdash-claude.abc123',
       "printf 'hello world'",
@@ -94,8 +94,9 @@ describe('buildZellijShellLine', () => {
     expect(result).toMatch(/^\/bin\/sh -c /);
     expect(result).toContain('command -v zellij');
     expect(result).toContain('zellij list-sessions --no-formatting');
-    expect(result).toContain('zellij attach --create-background "$session"');
+    expect(result).toContain('zellij attach --create "$session"');
     expect(result).toContain('zellij attach "$session" options --on-force-close detach');
+    expect(result).not.toContain('--create-background');
     expect(result).toContain('tab name="Claude Chat"');
     expect(result).toContain('pane command="/bin/sh"');
     expect(result).toContain('cwd="/workspace/project"');
@@ -121,18 +122,64 @@ describe('buildZellijShellLine', () => {
     expect(result).toContain('source ~/.nvm/nvm.sh && exec bash -il');
   });
 
-  it('propagates create-background failures when the session was not created', () => {
+  it('attaches active sessions without deleting or recreating them', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'emdash-zellij-fake-'));
+    const callsFile = path.join(root, 'calls.txt');
+    const sessionName = 'emdash-fake.pty.leafhash00.session1.label';
     try {
+      writeFileSync(callsFile, '');
       writeExecutable(
         path.join(root, 'zellij'),
         [
           '#!/bin/sh',
+          'if [ "$1" = "list-sessions" ]; then',
+          `  printf '%s [Created today]\\n' ${JSON.stringify(sessionName)}`,
+          '  exit 0',
+          'fi',
+          'if [ "$1" = "delete-session" ]; then',
+          `  printf 'delete %s\\n' "$2" >> ${JSON.stringify(callsFile)}`,
+          '  exit 0',
+          'fi',
+          'if [ "$1" = "attach" ]; then',
+          '  case " $* " in',
+          `    *" --create "*) printf 'create %s\\n' "$3" >> ${JSON.stringify(callsFile)}; exit 0 ;;`,
+          `    *) printf 'attach %s\\n' "$2" >> ${JSON.stringify(callsFile)}; exit 0 ;;`,
+          '  esac',
+          'fi',
+          'exit 1',
+          '',
+        ].join('\n')
+      );
+
+      const result = spawnSync(
+        '/bin/sh',
+        ['-lc', buildZellijShellLine(sessionName, 'true', root)],
+        {
+          env: { ...process.env, PATH: `${root}:${process.env.PATH ?? ''}` },
+          encoding: 'utf8',
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(callsFile, 'utf8').trim()).toBe(`attach ${sessionName}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates foreground create failures when the session was not created', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'emdash-zellij-fake-'));
+    const callsFile = path.join(root, 'calls.txt');
+    try {
+      writeFileSync(callsFile, '');
+      writeExecutable(
+        path.join(root, 'zellij'),
+        [
+          '#!/bin/sh',
+          `printf '%s\\n' "$*" >> ${JSON.stringify(callsFile)}`,
           'if [ "$1" = "list-sessions" ]; then exit 0; fi',
           'if [ "$1" = "delete-session" ]; then exit 0; fi',
-          'if [ "$1" = "attach" ]; then',
-          '  case " $* " in *" --create-background "*) exit 42 ;; esac',
-          'fi',
+          'if [ "$1" = "attach" ]; then exit 42; fi',
           'exit 0',
           '',
         ].join('\n')
@@ -147,24 +194,40 @@ describe('buildZellijShellLine', () => {
         }
       );
 
+      const calls = readFileSync(callsFile, 'utf8').trim().split('\n');
       expect(result.status).toBe(42);
+      expect(calls).toHaveLength(4);
+      expect(calls[0]).toBe('list-sessions --no-formatting');
+      expect(calls[1]).toBe('delete-session emdash-fake.pty.leaf.session.label');
+      expect(calls[2]).toContain(
+        'attach --create emdash-fake.pty.leaf.session.label options --default-layout '
+      );
+      expect(calls[2]).toContain(' --on-force-close detach');
+      expect(calls[3]).toBe('list-sessions --no-formatting');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('does not treat exited resurrectable sessions as active', () => {
+  it('falls back to attach when another process creates the session first', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'emdash-zellij-fake-'));
     const callsFile = path.join(root, 'calls.txt');
+    const listCountFile = path.join(root, 'list-count.txt');
     const sessionName = 'emdash-fake.pty.leafhash00.session1.label';
     try {
       writeFileSync(callsFile, '');
+      writeFileSync(listCountFile, '0');
       writeExecutable(
         path.join(root, 'zellij'),
         [
           '#!/bin/sh',
           'if [ "$1" = "list-sessions" ]; then',
-          `  printf '%s [Created today] (EXITED - attach to resurrect)\\n' ${JSON.stringify(sessionName)}`,
+          `  count=$(cat ${JSON.stringify(listCountFile)})`,
+          '  count=$((count + 1))',
+          `  printf '%s\\n' "$count" > ${JSON.stringify(listCountFile)}`,
+          '  if [ "$count" -ge 2 ]; then',
+          `    printf '%s [Created today]\\n' ${JSON.stringify(sessionName)}`,
+          '  fi',
           '  exit 0',
           'fi',
           'if [ "$1" = "delete-session" ]; then',
@@ -173,7 +236,7 @@ describe('buildZellijShellLine', () => {
           'fi',
           'if [ "$1" = "attach" ]; then',
           '  case " $* " in',
-          `    *" --create-background "*) printf 'create %s\\n' "$3" >> ${JSON.stringify(callsFile)}; exit 0 ;;`,
+          `    *" --create "*) printf 'create %s\\n' "$3" >> ${JSON.stringify(callsFile)}; exit 42 ;;`,
           `    *) printf 'attach %s\\n' "$2" >> ${JSON.stringify(callsFile)}; exit 0 ;;`,
           '  esac',
           'fi',
@@ -202,6 +265,110 @@ describe('buildZellijShellLine', () => {
     }
   });
 
+  it('recreates when an active session disappears before attach', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'emdash-zellij-fake-'));
+    const callsFile = path.join(root, 'calls.txt');
+    const listCountFile = path.join(root, 'list-count.txt');
+    const sessionName = 'emdash-fake.pty.leafhash00.session1.label';
+    try {
+      writeFileSync(callsFile, '');
+      writeFileSync(listCountFile, '0');
+      writeExecutable(
+        path.join(root, 'zellij'),
+        [
+          '#!/bin/sh',
+          'if [ "$1" = "list-sessions" ]; then',
+          `  count=$(cat ${JSON.stringify(listCountFile)})`,
+          '  count=$((count + 1))',
+          `  printf '%s\\n' "$count" > ${JSON.stringify(listCountFile)}`,
+          '  if [ "$count" = "1" ]; then',
+          `    printf '%s [Created today]\\n' ${JSON.stringify(sessionName)}`,
+          '  fi',
+          '  exit 0',
+          'fi',
+          'if [ "$1" = "delete-session" ]; then',
+          `  printf 'delete %s\\n' "$2" >> ${JSON.stringify(callsFile)}`,
+          '  exit 0',
+          'fi',
+          'if [ "$1" = "attach" ]; then',
+          '  case " $* " in',
+          `    *" --create "*) printf 'create %s\\n' "$3" >> ${JSON.stringify(callsFile)}; exit 0 ;;`,
+          `    *) printf 'attach %s\\n' "$2" >> ${JSON.stringify(callsFile)}; exit 42 ;;`,
+          '  esac',
+          'fi',
+          'exit 1',
+          '',
+        ].join('\n')
+      );
+
+      const result = spawnSync(
+        '/bin/sh',
+        ['-lc', buildZellijShellLine(sessionName, 'true', root)],
+        {
+          env: { ...process.env, PATH: `${root}:${process.env.PATH ?? ''}` },
+          encoding: 'utf8',
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(callsFile, 'utf8').trim().split('\n')).toEqual([
+        `attach ${sessionName}`,
+        `delete ${sessionName}`,
+        `create ${sessionName}`,
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat exited resurrectable sessions as active', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'emdash-zellij-fake-'));
+    const callsFile = path.join(root, 'calls.txt');
+    const sessionName = 'emdash-fake.pty.leafhash00.session1.label';
+    try {
+      writeFileSync(callsFile, '');
+      writeExecutable(
+        path.join(root, 'zellij'),
+        [
+          '#!/bin/sh',
+          'if [ "$1" = "list-sessions" ]; then',
+          `  printf '%s [Created today] (EXITED - attach to resurrect)\\n' ${JSON.stringify(sessionName)}`,
+          '  exit 0',
+          'fi',
+          'if [ "$1" = "delete-session" ]; then',
+          `  printf 'delete %s\\n' "$2" >> ${JSON.stringify(callsFile)}`,
+          '  exit 0',
+          'fi',
+          'if [ "$1" = "attach" ]; then',
+          '  case " $* " in',
+          `    *" --create "*) printf 'create %s\\n' "$3" >> ${JSON.stringify(callsFile)}; exit 0 ;;`,
+          `    *) printf 'attach %s\\n' "$2" >> ${JSON.stringify(callsFile)}; exit 0 ;;`,
+          '  esac',
+          'fi',
+          'exit 1',
+          '',
+        ].join('\n')
+      );
+
+      const result = spawnSync(
+        '/bin/sh',
+        ['-lc', buildZellijShellLine(sessionName, 'true', root)],
+        {
+          env: { ...process.env, PATH: `${root}:${process.env.PATH ?? ''}` },
+          encoding: 'utf8',
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(callsFile, 'utf8').trim().split('\n')).toEqual([
+        `delete ${sessionName}`,
+        `create ${sessionName}`,
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('cleans the temporary layout directory after foreground attach exits', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'emdash-zellij-fake-'));
     const tmpRoot = path.join(root, 'tmp');
@@ -214,7 +381,7 @@ describe('buildZellijShellLine', () => {
           'if [ "$1" = "list-sessions" ]; then exit 0; fi',
           'if [ "$1" = "delete-session" ]; then exit 0; fi',
           'if [ "$1" = "attach" ]; then',
-          '  case " $* " in *" --create-background "*) exit 0 ;; esac',
+          '  case " $* " in *" --create "*) exit 0 ;; esac',
           'fi',
           'if [ "$1" = "attach" ]; then exit 0; fi',
           'exit 1',
