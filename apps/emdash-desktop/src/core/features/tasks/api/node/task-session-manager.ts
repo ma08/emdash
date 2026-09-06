@@ -131,11 +131,23 @@ async function cleanupDetachedSessions(
     return;
   }
   const { conversationIds, terminalIds } = await getTaskSessionLeafIds(db, projectId, taskId);
-  const sessionNames = [...conversationIds, ...terminalIds].map((leafId) =>
-    makeTmuxSessionName(makePtySessionId(projectId, taskId, leafId))
+  const ptySessionIds = [...conversationIds, ...terminalIds].map((leafId) =>
+    makePtySessionId(projectId, taskId, leafId)
   );
-  if (sessionNames.length > 0) {
-    await runtime.data.terminals.killTmuxSessions({ sessionNames });
+  if (ptySessionIds.length > 0) {
+    await runtime.data.terminals.killTmuxSessions({
+      sessionNames: ptySessionIds.map(makeTmuxSessionName),
+    });
+    try {
+      await runtime.data.terminals.killZellijSessions({ ptySessionIds });
+    } catch (error) {
+      // A workspace-server that predates zellij support has no such procedure.
+      log.debug('cleanupDetachedSessions: zellij cleanup unavailable on host', {
+        projectId,
+        taskId,
+        error: String(error),
+      });
+    }
   }
 }
 

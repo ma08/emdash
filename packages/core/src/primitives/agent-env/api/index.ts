@@ -139,6 +139,11 @@ const DISPLAY_ENV_VARS = [
   'XAUTHORITY',
   'WAYLAND_DISPLAY',
   'XDG_RUNTIME_DIR',
+  // zellij resolves its socket and config directories from these; the agent must
+  // land in the same namespace the runtime lists and deletes sessions in.
+  'ZELLIJ_CONFIG_DIR',
+  'ZELLIJ_CONFIG_FILE',
+  'ZELLIJ_SOCKET_DIR',
   'XDG_CURRENT_DESKTOP',
   'XDG_SESSION_TYPE',
   'DBUS_SESSION_BUS_ADDRESS',

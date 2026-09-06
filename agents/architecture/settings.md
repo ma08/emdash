@@ -23,6 +23,7 @@ committed and shared.
 | `env` | Workspace registry host-local personal config | host-local personal > unset | `resolveProjectConfig()` | Task terminals, lifecycle scripts, and TUI/ACP agent launches |
 | `shellSetup` | Team `.emdash.json`; host settings JSON | that workspace's team file > host default > unset | `resolveProjectConfig()` | Workspace lifecycle script launches and task-session launch context resolution |
 | `tmux` | Desktop project-settings DB override; host settings JSON; desktop app setting `project.tmuxByDefault` | stored project override > host default > app default | `resolveTmux()` in `apps/emdash-desktop/src/core/primitives/project-settings/api/effective-settings.ts` | Task-session launch context resolution and project-session teardown |
+| `multiplexer` | Host settings JSON; desktop app setting `project.multiplexer` | host default > app default (`tmux`); no per-project layer | `resolveMultiplexer()` in `apps/emdash-desktop/src/core/primitives/project-settings/api/effective-settings.ts` | Task-session launch context resolution: picks the tmux or zellij session name when `tmux` resolves on |
 | `worktreeRoot` | Desktop project-settings DB override; host settings JSON; built-in host path | stored project override > host default > `<host-home>/emdash/worktrees` | `resolveWorktreeRoot()` in `apps/emdash-desktop/src/core/primitives/project-settings/api/effective-settings.ts` | `WorkspacePlacementResolver`, task creation, and destination previews |
 | `defaultBranch` | Desktop project-settings DB; live repository facts | valid stored branch > remote HEAD > well-known remote branch > well-known local branch > unavailable | `resolveEffectiveSettings()` / `resolveEffectiveGitSettings()` in `apps/emdash-desktop/src/core/primitives/project-settings/api/effective-settings.ts` | Task and terminal environment, task creation, automation deployment, source-control UI |
 | `baseRemote` | Desktop project-settings DB; live repository facts | valid stored remote > `origin` > sole remote > first remote alphabetically > unavailable | `resolveEffectiveSettings()` / `resolveEffectiveGitSettings()` | Git fetch, task creation, automation deployment, source-control UI |
@@ -34,7 +35,7 @@ committed and shared.
 ## Domain Boundaries
 
 - `ProjectSettingsProvider` exposes stored Git identity, stored placement, placement context, and
-  resolver-backed tmux. It does not expose a merged `get()` or `update()` API.
+  resolver-backed tmux and multiplexer. It does not expose a merged `get()` or `update()` API.
 - Desktop DB JSON stores only explicit project overrides. `tmuxDefaultMigrated` is one-time lazy
   migration metadata, not a user setting.
 - Project settings pages are self-contained domain snapshots. Forms patch only touched fields;

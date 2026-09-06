@@ -1,4 +1,8 @@
-import { Switch, Tooltip } from '@emdash/ui/react/primitives';
+import {
+  isSessionMultiplexer,
+  type SessionMultiplexer,
+} from '@emdash/core/primitives/session-multiplexer/api';
+import { Select, Switch, Tooltip } from '@emdash/ui/react/primitives';
 import { Info } from 'lucide-react';
 import React from 'react';
 import { useAppSettingsKey } from '@core/features/settings/api/browser/use-app-settings-key';
@@ -233,11 +237,11 @@ export const EnableTmuxRow: React.FC = () => {
 
   return (
     <SettingRow
-      title="Enable tmux"
+      title="Enable persistent sessions"
       description={
         tmuxSupported
-          ? 'Run agent sessions and terminals in tmux sessions by default.'
-          : 'tmux is unavailable for Windows sessions. Your stored preference is preserved.'
+          ? 'Run agent sessions and terminals in tmux or zellij sessions by default, so they survive app restarts.'
+          : 'Persistent sessions are unavailable for Windows sessions. Your stored preference is preserved.'
       }
       control={
         <>
@@ -252,6 +256,52 @@ export const EnableTmuxRow: React.FC = () => {
             disabled={loading || saving || !tmuxSupported}
             onCheckedChange={(checked) => update({ tmuxByDefault: checked })}
           />
+        </>
+      }
+    />
+  );
+};
+
+export const SessionMultiplexerRow: React.FC = () => {
+  const {
+    value: projects,
+    update,
+    isLoading: loading,
+    isSaving: saving,
+    isFieldOverridden,
+    resetField,
+  } = useAppSettingsKey('project');
+
+  const multiplexer: SessionMultiplexer = projects?.multiplexer ?? 'tmux';
+  const supported = detectPlatformContext().os !== 'windows';
+
+  return (
+    <SettingRow
+      title="Session multiplexer"
+      description="Which multiplexer backs persistent sessions. Hosts can override this in their machine settings; zellij must be installed on the host."
+      control={
+        <>
+          <ResetToDefaultButton
+            visible={isFieldOverridden('multiplexer')}
+            defaultLabel="tmux"
+            onReset={() => resetField('multiplexer')}
+            disabled={loading || saving || !supported}
+          />
+          <Select.Root
+            value={multiplexer}
+            disabled={loading || saving || !supported}
+            onValueChange={(next) => {
+              if (isSessionMultiplexer(next)) void update({ multiplexer: next });
+            }}
+          >
+            <Select.Trigger className="w-auto shrink-0 gap-2 [&>span]:line-clamp-none">
+              <Select.Value />
+            </Select.Trigger>
+            <Select.Content className="min-w-max">
+              <Select.Item value="tmux">tmux</Select.Item>
+              <Select.Item value="zellij">zellij</Select.Item>
+            </Select.Content>
+          </Select.Root>
         </>
       }
     />

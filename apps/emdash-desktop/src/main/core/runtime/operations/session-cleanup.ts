@@ -20,6 +20,7 @@ export type LifecycleSessionTargets = {
   tuiConversationIds: string[];
   terminalSessionIds: string[];
   tmuxSessionNames: string[];
+  zellijPtySessionIds: string[];
 };
 
 /** The task being deleted plus the host its sessions live on — all this module needs. */
@@ -38,7 +39,7 @@ export type SessionCleanupDependencies = {
   getAcpRuntimeClient(): Promise<AcpRuntimeClient>;
   getProjectTerminals(
     projectId: string
-  ): Pick<TerminalsRuntimeClient, 'killTmuxSessions'> | undefined;
+  ): Pick<TerminalsRuntimeClient, 'killTmuxSessions' | 'killZellijSessions'> | undefined;
   getTerminalsRuntimeClient(): Promise<TerminalsRuntimeClient>;
   getTuiAgentsRuntimeClient(): Promise<TuiAgentsRuntimeClient>;
 };
@@ -63,6 +64,7 @@ export async function resolveLifecycleSessionTargets(
     tuiConversationIds: new Set(),
     terminalSessionIds: new Set(),
     tmuxSessionNames: new Set(),
+    zellijPtySessionIds: new Set(),
   };
   const taskIds = operation.taskId ? [operation.taskId] : [];
   if (taskIds.length > 0) {
@@ -101,9 +103,9 @@ export async function resolveLifecycleSessionTargets(
     }
     for (const row of [...acpRows, ...tuiRows, ...terminalRows]) {
       if (row.projectId === null || row.taskId === null) continue;
-      targets.tmuxSessionNames.add(
-        makeTmuxSessionName(makePtySessionId(row.projectId, row.taskId, row.id))
-      );
+      const sessionId = makePtySessionId(row.projectId, row.taskId, row.id);
+      targets.tmuxSessionNames.add(makeTmuxSessionName(sessionId));
+      targets.zellijPtySessionIds.add(sessionId);
     }
   }
 
@@ -157,10 +159,21 @@ export async function killLifecycleTerminalSessions(
     }
   }
 
-  if (!operation.projectId || targets.tmuxSessionNames.length === 0) return;
+  if (!operation.projectId) return;
+  if (targets.tmuxSessionNames.length === 0 && targets.zellijPtySessionIds.length === 0) return;
   const projectTerminals = dependencies.getProjectTerminals(operation.projectId);
   if (!projectTerminals) return;
-  await projectTerminals.killTmuxSessions({ sessionNames: targets.tmuxSessionNames });
+  if (targets.tmuxSessionNames.length > 0) {
+    await projectTerminals.killTmuxSessions({ sessionNames: targets.tmuxSessionNames });
+  }
+  if (targets.zellijPtySessionIds.length > 0) {
+    try {
+      await projectTerminals.killZellijSessions({ ptySessionIds: targets.zellijPtySessionIds });
+    } catch {
+      // A workspace-server that predates zellij support has no such procedure;
+      // the tmux kill above already ran, so nothing is lost for tmux users.
+    }
+  }
 }
 
 function toArrays(targets: SessionTargetSets): LifecycleSessionTargets {
@@ -169,6 +182,7 @@ function toArrays(targets: SessionTargetSets): LifecycleSessionTargets {
     tuiConversationIds: [...targets.tuiConversationIds],
     terminalSessionIds: [...targets.terminalSessionIds],
     tmuxSessionNames: [...targets.tmuxSessionNames],
+    zellijPtySessionIds: [...targets.zellijPtySessionIds],
   };
 }
 

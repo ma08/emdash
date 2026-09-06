@@ -7,6 +7,7 @@ import type {
 } from '@core/features/projects/api/node/settings/provider';
 import type { ProjectSettingsDomainPatch } from '@core/features/projects/api/project-settings-page';
 import {
+  resolveMultiplexer as resolveEffectiveMultiplexer,
   resolveTmux as resolveEffectiveTmux,
   type PlacementContext,
   type RepoFacts,
@@ -411,6 +412,14 @@ export abstract class DbProjectSettingsProvider
       projectTmux: stored.tmux,
       hostTmux: placement.hostTmux,
       appDefaultTmux: placement.appDefaultTmux,
+    });
+  }
+
+  async resolveMultiplexer() {
+    const placement = await this.placementContext();
+    return resolveEffectiveMultiplexer({
+      hostMultiplexer: placement.hostMultiplexer ?? null,
+      appDefaultMultiplexer: placement.appDefaultMultiplexer,
     });
   }
 }

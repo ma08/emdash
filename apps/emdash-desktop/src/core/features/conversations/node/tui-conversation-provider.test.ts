@@ -122,6 +122,8 @@ describe('TuiConversationProvider', () => {
         path: '/workspace',
       },
       tmux: false,
+      multiplexer: 'tmux' as const,
+      taskName: 'Old task',
       shellSetup: 'source old-profile',
       env: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-old',
@@ -174,6 +176,38 @@ describe('TuiConversationProvider', () => {
       })
     );
   });
+
+  it('names the zellij session after the task when the launch context selects zellij', async () => {
+    const resolve = vi.fn(async () =>
+      ok({
+        workspace: {
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          host: { type: 'local', id: 'local' } as const,
+          path: '/workspace',
+        },
+        tmux: true,
+        multiplexer: 'zellij' as const,
+        taskName: 'Fix login bug',
+        env: {},
+      })
+    );
+    const provider = createProvider({ launchContextSource: { resolve } });
+
+    await provider.ensureSession({
+      conversation: conversation({ id: 'conversation-1', providerId: 'claude' }),
+      mode: 'start',
+    });
+
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        zellijSessionName: expect.stringMatching(/^em-fix-login\.[A-Za-z0-9_-]{8}$/),
+      })
+    );
+    expect(start).toHaveBeenCalledWith(
+      expect.not.objectContaining({ tmuxSessionName: expect.any(String) })
+    );
+  });
 });
 
 function createProvider(
@@ -201,6 +235,8 @@ function createProvider(
               path: '/workspace',
             },
             tmux: false,
+            multiplexer: 'tmux' as const,
+            taskName: 'Task 1',
             env: {},
           }),
       },

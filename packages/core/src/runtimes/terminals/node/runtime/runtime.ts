@@ -16,6 +16,7 @@ import type {
 import {
   terminalsContract,
   type KillTmuxSessionsInput,
+  type KillZellijSessionsInput,
   type ShellAvailabilityFailedError,
   type StartTerminalInput,
   type StartTerminalSpec,
@@ -34,6 +35,8 @@ import {
 import {
   buildTerminalEnv,
   killTmuxSession,
+  killZellijSessionsForPtySessionIds,
+  killZellijSessionsMatching,
   makeTmuxSessionName,
   resolveLocalPtySpawn,
   PtyRegistry,
@@ -289,6 +292,21 @@ export class TerminalsRuntime {
     return ok(undefined);
   }
 
+  /** Best effort like `killTmuxSessions`: a host without zellij, or a failing listing, is not an error. */
+  async killZellijSessions(
+    input: KillZellijSessionsInput
+  ): Promise<Result<void, TerminalRuntimeError>> {
+    if (process.platform === 'win32') return ok(undefined);
+    try {
+      await this.withExecutionContext((exec) =>
+        killZellijSessionsForPtySessionIds(exec, input.ptySessionIds)
+      );
+    } catch {
+      // Swallowed by design; the desktop deletes tasks regardless of host state.
+    }
+    return ok(undefined);
+  }
+
   dispose(): void {
     this.lifecycle.dispose();
     this.registry.killAll();
@@ -306,7 +324,7 @@ export class TerminalsRuntime {
    * restart, or workspace deactivation.
    */
   private async killSession(sessionKey: string, cause: DeactivationCause): Promise<void> {
-    await this.killTmuxForSession(sessionKey);
+    await this.killMultiplexerForSession(sessionKey);
     await this.lifecycle.evict(sessionKey, { cause });
   }
 
@@ -335,6 +353,7 @@ export class TerminalsRuntime {
         shellProfile,
         shellSetup: spec.shellSetup,
         tmuxSessionName: spec.tmux ? makeTmuxSessionName(sessionKey) : undefined,
+        zellijSessionName: spec.tmux ? undefined : spec.zellijSessionName,
       },
       platform: process.platform,
       env,
@@ -382,12 +401,18 @@ export class TerminalsRuntime {
     });
   }
 
-  private async killTmuxForSession(sessionKey: string): Promise<void> {
+  private async killMultiplexerForSession(sessionKey: string): Promise<void> {
     const config = this.interactiveConfigs.get(sessionKey);
-    if (!config?.spec.tmux || process.platform === 'win32') return;
-    await this.withExecutionContext((exec) =>
-      killTmuxSession(exec, makeTmuxSessionName(sessionKey))
-    );
+    if (!config || process.platform === 'win32') return;
+    if (config.spec.tmux) {
+      await this.withExecutionContext((exec) =>
+        killTmuxSession(exec, makeTmuxSessionName(sessionKey))
+      );
+      return;
+    }
+    const zellijSessionName = config.spec.zellijSessionName;
+    if (!zellijSessionName) return;
+    await this.withExecutionContext((exec) => killZellijSessionsMatching(exec, zellijSessionName));
   }
 
   private async shellResolverFor(
@@ -451,6 +476,7 @@ export class TerminalsRuntime {
         status: session.exited ? 'exited' : 'running',
         startCount: this.startCounts.get(key) ?? existing?.startCount ?? 1,
         tmux: this.interactiveConfigs.get(key)?.spec.tmux,
+        zellij: isZellijSpec(this.interactiveConfigs.get(key)?.spec) ? true : undefined,
         pid: session.getPid(),
         cols: session.spec.cols,
         rows: session.spec.rows,
@@ -578,6 +604,11 @@ export class TerminalsRuntime {
 
 function scopeKeyFor(workspace: HostFileRef): string {
   return resourceKeyFromFileRef(workspace);
+}
+
+/** tmux wins when a spec carries both, mirroring the spawn intent. */
+function isZellijSpec(spec: StartTerminalSpec | undefined): boolean {
+  return Boolean(spec && !spec.tmux && spec.zellijSessionName);
 }
 
 function sessionKeyFor(key: TerminalKey): string {

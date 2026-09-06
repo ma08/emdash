@@ -30,6 +30,8 @@ export const tuiAgentStartInputSchema = z.object({
   rows: z.number().int(),
   shellSetup: z.string().optional(),
   tmuxSessionName: z.string().optional(),
+  /** Persistent zellij session to attach; mutually exclusive with `tmuxSessionName`. */
+  zellijSessionName: z.string().optional(),
 });
 
 export type TuiAgentStartInput = z.infer<typeof tuiAgentStartInputSchema>;

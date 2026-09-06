@@ -45,7 +45,11 @@ import type {
   Provenance,
   Resolved,
 } from '@core/primitives/project-settings/api';
-import { formatDefaultBranch, resolveTmux } from '@core/primitives/project-settings/api';
+import {
+  formatDefaultBranch,
+  resolveMultiplexer,
+  resolveTmux,
+} from '@core/primitives/project-settings/api';
 import type { Project } from '@core/primitives/projects/api';
 import { cn } from '@core/primitives/styling/browser/cn';
 import type { ProjectPlacementDomainSnapshot } from '../../../../api/project-settings-page';
@@ -171,6 +175,7 @@ export const BaseProjectSettingsSection = observer(function BaseProjectSettingsS
     hostTmux: placement.layers.hostTmux,
     appDefaultTmux: placement.layers.appDefaultTmux,
   });
+  const effectiveMultiplexer = resolveMultiplexer(placement.layers).value;
   const tmuxSupported = projectType !== 'local' || detectPlatformContext().os !== 'windows';
   const derivedPoolPath =
     projectPath !== null && effectiveWorktreeRoot !== null
@@ -448,7 +453,7 @@ export const BaseProjectSettingsSection = observer(function BaseProjectSettingsS
       <Field.Root orientation="horizontal">
         <div className="flex flex-1 flex-col gap-1">
           <div className="flex items-center gap-2">
-            <Field.Label>Enable tmux</Field.Label>
+            <Field.Label>Enable persistent session</Field.Label>
             {tmuxSupported &&
             (hostObservationKind !== 'unavailable' || placementForm.tmux !== undefined) ? (
               <ProvenanceBadge provenance={effectiveTmux.provenance} flavor="inherited" />
@@ -462,10 +467,10 @@ export const BaseProjectSettingsSection = observer(function BaseProjectSettingsS
           </div>
           <Field.Description className="text-foreground-muted">
             {!tmuxSupported
-              ? 'tmux is unavailable for local Windows sessions. Your stored preference is preserved.'
+              ? 'Persistent sessions are unavailable for local Windows sessions. Your stored preference is preserved.'
               : hostObservationKind === 'unavailable' && placementForm.tmux === undefined
-                ? 'The inherited tmux value is unavailable. Choose a value to set a Project override.'
-                : 'Run the agent session inside a tmux session.'}
+                ? 'The inherited value is unavailable. Choose a value to set a Project override.'
+                : `Run the agent session inside a ${effectiveMultiplexer} session.`}
           </Field.Description>
         </div>
         <Switch

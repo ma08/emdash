@@ -18,6 +18,7 @@ import type {
   TerminalShellResolver,
 } from '#primitives/terminal-shell/api';
 import type { TerminalSessionState } from '#runtimes/terminals/api';
+import { makeZellijSessionName } from '#services/pty/api';
 import { FakePtySpawner } from '#services/pty/testing';
 import {
   expectNoSessionResidue,
@@ -606,3 +607,113 @@ async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<voi
   }
   throw new Error('Timed out waiting for predicate');
 }
+
+describe('TerminalsRuntime zellij sessions', () => {
+  const ZELLIJ_SESSION = 'em-my-task.abcdefgh';
+
+  it('spawns interactive terminals inside the named zellij session', async () => {
+    const exec = fakeExec();
+    exec.exec.mockImplementation(async (_command: string, args: string[]) =>
+      args[0] === 'list-sessions'
+        ? { stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' }
+        : { stdout: '', stderr: '' }
+    );
+    const spawner = new FakePtySpawner();
+    const scope = createScope({ label: 'test-terminals-zellij' });
+    const runtime = new TerminalsRuntime({
+      spawner,
+      userEnv: async () => testUserEnv(),
+      exec,
+      scope,
+    });
+
+    try {
+      const key = { workspace: testWorkspace(), id: 'terminal-1' };
+      await runtime.start({
+        key,
+        spec: { cwd: '/repo', env: {}, zellijSessionName: ZELLIJ_SESSION },
+      });
+
+      const { invocation } = spawner.specs[0]!;
+      if (invocation.kind !== 'argv') throw new Error('Expected argv invocation');
+      expect(invocation.argv[1]).toContain('zellij attach --create');
+      expect(invocation.argv[1]).toContain(ZELLIJ_SESSION);
+      expect(invocation.argv[1]).toContain('cwd="/repo"');
+      expect(invocation.argv[1]).not.toContain('tmux');
+      expect(Object.values(await sessions(runtime))[0]).toMatchObject({ zellij: true });
+
+      await runtime.kill(key);
+
+      expect(exec.exec).toHaveBeenCalledWith('zellij', [
+        'delete-session',
+        '--force',
+        ZELLIJ_SESSION,
+      ]);
+      expect(exec.exec).not.toHaveBeenCalledWith('tmux', expect.anything());
+    } finally {
+      runtime.dispose();
+      await scope.dispose();
+    }
+  });
+
+  it('killZellijSessions deletes the sessions whose names match the PTY session ids', async () => {
+    const sessionId = 'project-1:task-1:terminal-1';
+    const wanted = makeZellijSessionName(sessionId, 'wanted');
+    const exec = fakeExec();
+    exec.exec.mockImplementation(async (_command: string, args: string[]) =>
+      args[0] === 'list-sessions'
+        ? {
+            stdout: `${wanted} [Created 1m ago]\nem-other.klmnopqr [Created 1m ago]\n`,
+            stderr: '',
+          }
+        : { stdout: '', stderr: '' }
+    );
+    const spawner = new FakePtySpawner();
+    const scope = createScope({ label: 'test-terminals-zellij' });
+    const runtime = new TerminalsRuntime({
+      spawner,
+      userEnv: async () => testUserEnv(),
+      exec,
+      scope,
+    });
+
+    const result = await runtime.killZellijSessions({ ptySessionIds: [sessionId] });
+
+    expect(result).toEqual({ success: true, data: undefined });
+    expect(exec.exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
+    expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', wanted]);
+    expect(exec.exec).toHaveBeenCalledTimes(2);
+    await scope.dispose();
+  });
+
+  it('killZellijSessions succeeds even when the host cannot list sessions', async () => {
+    const exec = fakeExec();
+    exec.exec.mockRejectedValue({ exitCode: 2, stderr: 'permission denied' });
+    const spawner = new FakePtySpawner();
+    const scope = createScope({ label: 'test-terminals-zellij' });
+    const runtime = new TerminalsRuntime({
+      spawner,
+      userEnv: async () => testUserEnv(),
+      exec,
+      scope,
+    });
+
+    const result = await runtime.killZellijSessions({ ptySessionIds: ['project:task:leaf'] });
+
+    expect(result).toEqual({ success: true, data: undefined });
+    await scope.dispose();
+  });
+
+  it('killZellijSessions returns ok without calling exec when no exec is injected', async () => {
+    const spawner = new FakePtySpawner();
+    const scope = createScope({ label: 'test-terminals-zellij' });
+    const runtime = new TerminalsRuntime({ spawner, userEnv: async () => testUserEnv(), scope });
+
+    const result = await runtime.killZellijSessions({ ptySessionIds: ['project:task:leaf'] });
+
+    expect(result).toEqual({ success: true, data: undefined });
+    await scope.dispose();
+  });
+});

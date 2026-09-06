@@ -12,6 +12,7 @@ export default defineConfig({
     'primitives-host-dependencies-api': 'src/primitives/host-dependencies/api/index.ts',
     'primitives-kv-api': 'src/primitives/kv/api/index.ts',
     'primitives-terminal-shell-api': 'src/primitives/terminal-shell/api/index.ts',
+    'primitives-session-multiplexer-api': 'src/primitives/session-multiplexer/api/index.ts',
     'primitives-kv-node': 'src/primitives/kv/node/index.ts',
     'primitives-emdash-config-api': 'src/primitives/emdash-config/api/index.ts',
     'primitives-versioned-schema-api': 'src/primitives/versioned-schema/api/index.ts',

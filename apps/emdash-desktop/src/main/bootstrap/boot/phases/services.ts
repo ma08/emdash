@@ -1,4 +1,9 @@
-import { isLocalHostRef, LOCAL_HOST_REF, type HostRef } from '@emdash/core/primitives/host/api';
+import {
+  isLocalHostRef,
+  LOCAL_HOST_REF,
+  type HostRef,
+  sshConnectionIdOf,
+} from '@emdash/core/primitives/host/api';
 import { integrationPluginRegistry } from '@emdash/plugins/integrations';
 import { err, ok } from '@emdash/shared';
 import { runWithTimeout } from '@emdash/shared/scheduling';
@@ -275,9 +280,10 @@ export async function bootServices(
     ensureAbsoluteDir: (client, rootPath, absolutePath, options) =>
       ensureAbsoluteDir(async () => client, rootPath, absolutePath, options),
     runtimes,
-    getProjectDefaults: async () => ({
-      tmuxByDefault: (await appSettingsService.get('project')).tmuxByDefault,
-    }),
+    getProjectDefaults: async () => {
+      const project = await appSettingsService.get('project');
+      return { tmuxByDefault: project.tmuxByDefault, multiplexer: project.multiplexer };
+    },
     migrateAppWorktreeRoot: async () => {
       const local = await runtimes.client(LOCAL_HOST_REF);
       if (!local.success) throw new Error('local host runtime unavailable');
@@ -316,6 +322,20 @@ export async function bootServices(
     projects: projectManager,
     runtimes,
     workspaceIdentity,
+    hostProtocol: {
+      agreedMinor: async (host) => {
+        const connectionId = sshConnectionIdOf(host);
+        if (!connectionId) return null;
+        try {
+          return (
+            (await infrastructure.hosts.client(connectionId)).currentHandshake()?.agreedMinor ??
+            null
+          );
+        } catch {
+          return null;
+        }
+      },
+    },
   });
   const previewServerAccess = new PreviewServerAccessService({
     projects: projectManager,

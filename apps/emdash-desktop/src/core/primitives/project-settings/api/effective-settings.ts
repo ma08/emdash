@@ -1,3 +1,7 @@
+import {
+  DEFAULT_SESSION_MULTIPLEXER,
+  type SessionMultiplexer,
+} from '@emdash/core/primitives/session-multiplexer/api';
 import type { GitHubAccountSummary } from '@core/primitives/github/api';
 import { normalizeRepositoryHost } from '@core/primitives/repository/api';
 import type { PlacementContext } from './placement';
@@ -445,6 +449,30 @@ export function resolveTmux(
   }
   return {
     value: layers.appDefaultTmux,
+    provenance: { kind: 'inferred', from: 'app default' },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Session multiplexer: host default → app default
+// ---------------------------------------------------------------------------
+
+/**
+ * Which multiplexer backs persistent sessions when `resolveTmux()` says they
+ * are on. Deliberately has no per-project layer: the multiplexer is a property
+ * of the host's tooling. Layers that predate zellij support resolve to tmux.
+ */
+export function resolveMultiplexer(
+  layers: Pick<PlacementContext, 'hostMultiplexer' | 'appDefaultMultiplexer'>
+): Resolved<SessionMultiplexer> {
+  if (layers.hostMultiplexer !== null && layers.hostMultiplexer !== undefined) {
+    return {
+      value: layers.hostMultiplexer,
+      provenance: { kind: 'inferred', from: 'host default' },
+    };
+  }
+  return {
+    value: layers.appDefaultMultiplexer ?? DEFAULT_SESSION_MULTIPLEXER,
     provenance: { kind: 'inferred', from: 'app default' },
   };
 }

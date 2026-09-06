@@ -165,4 +165,22 @@ describe('host settings contract', () => {
       data: { settings: { tmux: true }, parseError: false },
     });
   });
+
+  it('stores the session multiplexer and clears it back to inherit with null', async () => {
+    const chosen = await wire.client.update({ tmux: true, multiplexer: 'zellij' });
+    expect(chosen).toEqual({
+      success: true,
+      data: { settings: { tmux: true, multiplexer: 'zellij' }, parseError: false },
+    });
+    expect(JSON.parse(await fs.readFile(settingsPath, 'utf8'))).toEqual({
+      tmux: true,
+      multiplexer: 'zellij',
+    });
+
+    const cleared = await wire.client.update({ multiplexer: null });
+    expect(cleared).toEqual({
+      success: true,
+      data: { settings: { tmux: true }, parseError: false },
+    });
+  });
 });

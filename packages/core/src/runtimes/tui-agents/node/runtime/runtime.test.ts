@@ -678,3 +678,381 @@ function leakContainers(runtime: TuiAgentsRuntime): LeakCheckContainer[] {
     },
   ];
 }
+
+describe('TuiAgentsRuntime zellij sessions', () => {
+  const ZELLIJ_SESSION = 'em-my-task.abcdefgh';
+
+  function zellijListing(lines: string[]) {
+    return vi.fn((command: string) =>
+      Promise.resolve(
+        command === 'zellij'
+          ? { stdout: `${lines.join('\n')}\n`, stderr: '' }
+          : { stdout: '', stderr: '' }
+      )
+    );
+  }
+
+  it('wraps command execution with shellSetup and zellij', async () => {
+    const { runtime, spawner } = createRuntime();
+
+    await runtime.startSession(
+      startInput({
+        shellSetup: 'source ~/.profile',
+        zellijSessionName: ZELLIJ_SESSION,
+      })
+    );
+
+    const { invocation } = spawner.specs[0]!;
+    if (invocation.kind !== 'argv') throw new Error('Expected argv invocation');
+    expect(invocation.executable).toBe('/bin/bash');
+    expect(invocation.argv[0]).toBe('-lc');
+    expect(invocation.argv[1]).toContain('zellij attach --create');
+    expect(invocation.argv[1]).toContain(ZELLIJ_SESSION);
+    expect(invocation.argv[1]).toContain('pane command="/bin/bash"');
+    // The command line sits inside the single-quoted KDL layout, so its own
+    // apostrophes arrive escaped; assert on the parts around them.
+    expect(invocation.argv[1]).toContain('source ~/.profile && agent run');
+    expect(invocation.argv[1]).toContain('hello world');
+    expect(invocation.argv[1]).not.toContain('tmux');
+  });
+
+  it('removes the zellij intent on Windows', async () => {
+    const { runtime, spawner, exec } = createRuntime({ platform: 'win32' });
+
+    await runtime.startSession(
+      startInput({ cwd: 'C:\\workspace', zellijSessionName: 'must-not-run' })
+    );
+
+    const invocation = spawner.specs[0]!.invocation;
+    expect(JSON.stringify(invocation)).not.toContain('zellij');
+    await runtime.reconcile();
+    await runtime.dispose();
+    expect(exec.exec).not.toHaveBeenCalled();
+  });
+
+  it('stops and deletes sessions while cleaning up zellij, under any label', async () => {
+    const renamed = 'em-renamed.abcdefgh';
+    const exec = zellijListing([`${renamed} [Created 1m ago]`]);
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await runtime.stopSession('conversation-1');
+
+    expect(spawner.processes[0]!.killCount).toBeGreaterThan(0);
+    await vi.waitFor(() => {
+      expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', renamed]);
+    });
+    expect(exec).not.toHaveBeenCalledWith('tmux', expect.anything());
+  });
+
+  it("makes a restart wait for the stopped session's zellij cleanup", async () => {
+    let releaseListing: (() => void) | undefined;
+    const events: string[] = [];
+    const exec = vi.fn((command: string, args: string[]) => {
+      if (command !== 'zellij') return Promise.resolve({ stdout: '', stderr: '' });
+      if (args[0] === 'list-sessions') {
+        events.push('list');
+        return new Promise<{ stdout: string; stderr: string }>((resolve) => {
+          releaseListing = () =>
+            resolve({ stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' });
+        });
+      }
+      events.push(`delete:${args[2]}`);
+      return Promise.resolve({ stdout: '', stderr: '' });
+    });
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await runtime.stopSession('conversation-1');
+    const restart = runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await vi.waitFor(() => expect(events).toEqual(['list']));
+    expect(spawner.specs).toHaveLength(1);
+
+    releaseListing?.();
+    await expect(restart).resolves.toEqual(ok({ outcome: 'started' }));
+
+    expect(events).toEqual(['list', `delete:${ZELLIJ_SESSION}`]);
+    expect(spawner.specs).toHaveLength(2);
+  });
+
+  it('lets a start queued ahead of a stop keep the session it creates', async () => {
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    // The restart is queued on the launch mutex before the stop arrives, so it
+    // runs first; the stop's kill must then stand down instead of deleting
+    // the session the restart just created.
+    const restart = runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    const stopped = runtime.stopSession('conversation-1');
+
+    await expect(restart).resolves.toEqual(ok({ outcome: 'started' }));
+    await stopped;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', ZELLIJ_SESSION]);
+    expect(spawner.specs).toHaveLength(2);
+  });
+
+  it("makes a restart wait for a deleted session's zellij cleanup", async () => {
+    let releaseListing: (() => void) | undefined;
+    const events: string[] = [];
+    const exec = vi.fn((command: string, args: string[]) => {
+      if (command !== 'zellij') return Promise.resolve({ stdout: '', stderr: '' });
+      if (args[0] === 'list-sessions') {
+        events.push('list');
+        return new Promise<{ stdout: string; stderr: string }>((resolve) => {
+          releaseListing = () =>
+            resolve({ stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' });
+        });
+      }
+      events.push(`delete:${args[2]}`);
+      return Promise.resolve({ stdout: '', stderr: '' });
+    });
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    const deletion = runtime.deleteSession('conversation-1');
+    await vi.waitFor(() => expect(events).toEqual(['list']));
+    const restart = runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(spawner.specs).toHaveLength(1);
+
+    releaseListing?.();
+    await deletion;
+    await expect(restart).resolves.toEqual(ok({ outcome: 'started' }));
+
+    expect(events).toEqual(['list', `delete:${ZELLIJ_SESSION}`]);
+    expect(spawner.specs).toHaveLength(2);
+  });
+
+  it('does not list zellij during idle sweeps while the PTY client is attached', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
+    const { runtime } = createRuntime({
+      clock,
+      // Long idle window: the sweep runs but keeps the session, so the only
+      // zellij call that could appear is a sweep-side listing.
+      lifecycle: { session: { kind: 'idle-after', outputMs: 60_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await clock.advanceBy(1_200);
+
+    expect(exec).not.toHaveBeenCalledWith('zellij', expect.anything());
+  });
+
+  it('keeps a detached zellij session alive while zellij still runs it', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
+    const { runtime, spawner } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 1_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    // The attach client goes away (detach key, client crash); the agent keeps running.
+    spawner.processes[0]!.emitExit({ exitCode: 0, signal: null });
+    await clock.advanceBy(2_400);
+
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', ZELLIJ_SESSION]);
+    expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
+      'conversation-1'
+    );
+  });
+
+  it('keeps a detached zellij session alive even when the tmux listing fails', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = vi.fn((command: string, args: string[]) => {
+      if (command === 'tmux') return Promise.reject({ exitCode: 1, stderr: 'permission denied' });
+      if (args[0] === 'list-sessions') {
+        return Promise.resolve({ stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' });
+      }
+      return Promise.resolve({ stdout: '', stderr: '' });
+    });
+    const { runtime, spawner } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 1_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ tmuxSessionName: 'emdash-test' }));
+    await runtime.startSession(
+      startInput({ conversationId: 'conversation-2', zellijSessionName: ZELLIJ_SESSION })
+    );
+    spawner.processes[1]!.emitExit({ exitCode: 0, signal: null });
+    await clock.advanceBy(2_400);
+
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', ZELLIJ_SESSION]);
+    expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
+      'conversation-2'
+    );
+  });
+
+  it('skips the tmux listing during sweeps when no tracked session uses tmux', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
+    const { runtime } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 60_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await clock.advanceBy(1_200);
+
+    expect(exec).not.toHaveBeenCalledWith('tmux', expect.anything());
+  });
+
+  it('evicts a detached zellij session once zellij reports it exited', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = zellijListing([
+      `${ZELLIJ_SESSION} [Created 1m ago] (EXITED - attach to resurrect)`,
+    ]);
+    const { runtime, spawner } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 1_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    spawner.processes[0]!.emitExit({ exitCode: 0, signal: null });
+    await clock.advanceBy(2_400);
+
+    await vi.waitFor(() => {
+      expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toEqual({});
+    });
+  });
+
+  it('reconciles tmux intents without consulting zellij', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      sessionId: 'provider-session',
+      payload: startInput({ sessionId: 'provider-session', tmuxSessionName: 'emdash-test' }),
+    });
+    const exec = vi.fn((command: string) =>
+      command === 'zellij'
+        ? Promise.reject({ exitCode: 2, stderr: 'unexpected argument' })
+        : Promise.resolve({ stdout: 'emdash-test\t42\n', stderr: '' })
+    );
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(exec).not.toHaveBeenCalledWith('zellij', expect.anything());
+    expect(spawner.specs).toHaveLength(1);
+  });
+
+  it('ignores suspended zellij intents when deciding whether to list zellij', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      sessionId: 'provider-session',
+      payload: startInput({ sessionId: 'provider-session', tmuxSessionName: 'emdash-test' }),
+    });
+    await intents.saveActive({
+      conversationId: 'conversation-2',
+      payload: startInput({ conversationId: 'conversation-2', zellijSessionName: ZELLIJ_SESSION }),
+    });
+    await intents.markSuspended('conversation-2', 'user');
+    const exec = vi.fn((command: string) =>
+      command === 'zellij'
+        ? Promise.reject({ exitCode: 2, stderr: 'permission denied' })
+        : Promise.resolve({ stdout: 'emdash-test\t42\n', stderr: '' })
+    );
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(exec).not.toHaveBeenCalledWith('zellij', expect.anything());
+    expect(spawner.specs).toHaveLength(1);
+  });
+
+  it('reconciles a zellij intent whose session was created under an earlier task label', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      sessionId: 'provider-session',
+      payload: startInput({ sessionId: 'provider-session', zellijSessionName: ZELLIJ_SESSION }),
+    });
+    const exec = zellijListing(['em-older-lbl.abcdefgh [Created 2h 3m ago]']);
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(spawner.specs).toHaveLength(1);
+  });
+
+  it('reconciles active intents only when their zellij session is running', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      sessionId: 'provider-session',
+      payload: startInput({ sessionId: 'provider-session', zellijSessionName: ZELLIJ_SESSION }),
+    });
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 2h 3m ago]`]);
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
+    expect(spawner.specs).toHaveLength(1);
+    expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
+      'conversation-1'
+    );
+  });
+
+  it('suspends active intents when their zellij session only exists as an exited remnant', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      payload: startInput({ zellijSessionName: ZELLIJ_SESSION }),
+    });
+    const exec = zellijListing([
+      `${ZELLIJ_SESSION} [Created 2h 3m ago] (EXITED - attach to resurrect)`,
+    ]);
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(spawner.specs).toHaveLength(0);
+    expect(intents.snapshot()[0]).toMatchObject({
+      conversationId: 'conversation-1',
+      status: 'suspended',
+      suspendedCause: 'process-lost',
+    });
+  });
+
+  it('aborts reconcile without suspending intents when the zellij listing fails', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      payload: startInput({ zellijSessionName: ZELLIJ_SESSION }),
+    });
+    const exec = vi.fn((command: string) =>
+      command === 'zellij'
+        ? Promise.reject({ exitCode: 2, stderr: 'permission denied' })
+        : Promise.resolve({ stdout: '', stderr: '' })
+    );
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(spawner.specs).toHaveLength(0);
+    expect(intents.snapshot()[0]).toMatchObject({
+      conversationId: 'conversation-1',
+      status: 'active',
+    });
+  });
+});

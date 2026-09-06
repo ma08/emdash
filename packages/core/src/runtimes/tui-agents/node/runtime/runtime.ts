@@ -39,16 +39,21 @@ import {
   type ConversationLifecycleReporter,
 } from '#services/conversation-reports/node';
 import {
+  activeZellijSessionFor,
   killTmuxSession,
+  killZellijSessionsMatching,
   listTmuxSessionActivity,
+  listZellijSessions,
   logLocalPtySpawnWarnings,
   PtyRegistry,
   resolveLocalPtySpawn,
   type PtyExitInfo,
   type PtySession,
   type PtySpawnSpec,
+  type ZellijSessionInfo,
 } from '#services/pty/api';
 import { resolveTerminalShell } from '#services/pty/node';
+import type { SessionIntent } from '#services/session-intents/api';
 import {
   SESSION_IDLE_MS,
   type ActivityFields,
@@ -91,7 +96,31 @@ export class TuiAgentsRuntime {
   private readonly workspaceTrust: TuiWorkspaceTrust;
   private readonly clock: Clock;
   private readonly lifecycle: ConversationSessionLifecycle;
+  /**
+   * tmux liveness table for the reconcile gate, filled by the reconcile
+   * precheck only. Reconcile gates intents one at a time with awaits in
+   * between, so the sweep must never write to it.
+   */
   private tmuxActivity = new Map<string, number>();
+  /** Sweep-side tmux activity, refreshed every sweep for the keep-alive window. */
+  private sweepTmuxActivity = new Map<string, number>();
+  /**
+   * zellij liveness table for the reconcile gate, filled by the reconcile
+   * precheck only, for the same reason as `tmuxActivity`.
+   */
+  private zellijSessions = new Map<string, ZellijSessionInfo>();
+  /**
+   * Sweep-side zellij liveness for conversations whose PTY client is gone.
+   * zellij reports no activity timestamps, so while a client is attached the
+   * activity tracker is the only signal (output flows through the PTY). Once
+   * the client is gone (detach key, client crash) a still-running zellij
+   * session counts as busy so the sweep never force-deletes a working agent;
+   * tmux gets the same protection from its activity timestamps. The cost is
+   * that an idle detached zellij session is only reclaimed by stop or delete.
+   */
+  private detachedZellijSessions = new Map<string, ZellijSessionInfo>();
+  /** True when the last sweep-side zellij listing failed: assume detached sessions are alive. */
+  private zellijListingFailed = false;
   private readonly unexpectedRespawns = new Map<string, number>();
   private readonly promptSpills = new Map<string, PromptSpillResult>();
   /**
@@ -154,16 +183,25 @@ export class TuiAgentsRuntime {
       sweepIntervalMs: deps.lifecycle?.sweepIntervalMs,
       beforeSweep: async () => {
         if ((this.deps.platform ?? process.platform) === 'win32') {
-          this.tmuxActivity = new Map();
+          this.sweepTmuxActivity = new Map();
           return;
         }
-        // Skip the tmux subprocess entirely when nothing is tracked; the sweep
-        // below iterates the same (empty) config set.
+        // Skip the multiplexer subprocesses entirely when nothing is tracked;
+        // the sweep below iterates the same (empty) config set.
         if (this.configs.size === 0) {
-          this.tmuxActivity = new Map();
+          this.sweepTmuxActivity = new Map();
+          this.detachedZellijSessions = new Map();
           return;
         }
-        this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
+        try {
+          this.sweepTmuxActivity = this.hasTmuxConfigs()
+            ? await listTmuxSessionActivity(this.deps.exec)
+            : new Map();
+        } finally {
+          // A tmux failure must not leave zellij liveness stale, or a
+          // detached zellij agent could be judged idle and killed.
+          await this.refreshDetachedZellijLiveness();
+        }
       },
       entries: () => this.configs.keys(),
       snapshot: (conversationId, activity) => this.lifecycleSnapshot(conversationId, activity),
@@ -186,7 +224,10 @@ export class TuiAgentsRuntime {
             this.unexpectedRespawns.delete(key);
           },
         },
-        { name: 'tmux-session', run: (key) => this.killTmuxForConfig(this.configs.get(key)) },
+        {
+          name: 'multiplexer-session',
+          run: (key) => this.killMultiplexerForConfig(this.configs.get(key)),
+        },
         {
           name: 'pty-registry',
           run: (key) => {
@@ -242,15 +283,23 @@ export class TuiAgentsRuntime {
           };
         },
         reconcile: {
-          precheck: async () => {
+          precheck: async (intents) => {
             if ((this.deps.platform ?? process.platform) === 'win32') {
               this.tmuxActivity = new Map();
+              this.zellijSessions = new Map();
               return { ctx: undefined };
             }
             try {
               // The prefetch doubles as the gate's liveness table; a listing
-              // failure vetoes the whole run (intents stay untouched).
-              this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
+              // failure vetoes the whole run (intents stay untouched). Each
+              // multiplexer is consulted only when an active intent needs it,
+              // so a host without one of them never blocks the other.
+              this.tmuxActivity = intents.some(intentUsesTmux)
+                ? await listTmuxSessionActivity(this.deps.exec)
+                : new Map();
+              this.zellijSessions = intents.some(intentUsesZellij)
+                ? await listZellijSessions(this.deps.exec)
+                : new Map();
               return { ctx: undefined };
             } catch (error) {
               return { veto: true as const, error };
@@ -265,9 +314,7 @@ export class TuiAgentsRuntime {
             return { input: this.normalizePlatformInput(parsed.data) };
           },
           gate: (input) => {
-            if (!input.tmuxSessionName || !this.tmuxActivity.has(input.tmuxSessionName)) {
-              return { suspend: 'process-lost' };
-            }
+            if (!this.multiplexerSessionAlive(input)) return { suspend: 'process-lost' };
             return { ok: true as const };
           },
           resume: (input) => this.resumeSession(input),
@@ -351,11 +398,20 @@ export class TuiAgentsRuntime {
   }
 
   async stopSession(conversationId: string): Promise<Result<void, TuiSessionControlError>> {
-    this.bumpGeneration(conversationId);
+    const stopGeneration = this.bumpGeneration(conversationId);
     const config = this.configs.get(conversationId);
     if (config) this.configs.set(conversationId, { ...config, intent: 'stopped' });
     this.unexpectedRespawns.delete(conversationId);
-    void this.killTmuxForConfig(config);
+    // Not awaited, but serialized with launches: the zellij kill lists and
+    // deletes by id hash, so a restart must not create its session before
+    // the stale cleanup has finished looking. A launch that was already
+    // queued ahead of this cleanup wins instead, exactly as it did when the
+    // tmux kill fired immediately: once it has re-created or re-attached the
+    // session the generation has moved on and the stale kill stands down.
+    void this.launchMutex.runExclusive(conversationId, async () => {
+      if (this.generations.get(conversationId) !== stopGeneration) return;
+      await this.killMultiplexerForConfig(config);
+    });
     this.registry.dispose(conversationId);
     const active = this.sessions.get(conversationId);
     if (active) active.pty = null;
@@ -369,7 +425,7 @@ export class TuiAgentsRuntime {
   }
 
   async deleteSession(conversationId: string): Promise<Result<void, TuiSessionControlError>> {
-    await this.lifecycle.evict(conversationId, { cause: 'user', intent: 'remove' });
+    await this.evictSerialized(conversationId, { cause: 'user', intent: 'remove' });
     return ok(undefined);
   }
 
@@ -379,13 +435,29 @@ export class TuiAgentsRuntime {
   ): Promise<Result<void, TuiSessionControlError>> {
     const config = this.configs.get(conversationId);
     if (!config || config.intent === 'stopped') return ok(undefined);
-    await this.lifecycle.evict(conversationId, { cause, intent: 'suspend' });
+    await this.evictSerialized(conversationId, { cause, intent: 'suspend' });
     return ok(undefined);
   }
 
   async killSession(conversationId: string): Promise<Result<void, TuiSessionControlError>> {
-    await this.lifecycle.evict(conversationId, { cause: 'user', intent: 'remove' });
+    await this.evictSerialized(conversationId, { cause: 'user', intent: 'remove' });
     return ok(undefined);
+  }
+
+  /**
+   * Eviction under the per-conversation launch mutex. The zellij kill inside
+   * it lists and deletes sessions by id hash, so a start or resume that
+   * overlaps an eviction must wait for the whole teardown rather than create
+   * its session between two evict steps. Nothing evicts while holding the
+   * mutex, so this cannot deadlock.
+   */
+  private evictSerialized(
+    conversationId: string,
+    options: Parameters<ConversationSessionLifecycle['evict']>[1]
+  ): Promise<void> {
+    return this.launchMutex.runExclusive(conversationId, () =>
+      this.lifecycle.evict(conversationId, options)
+    );
   }
 
   sendInput(conversationId: string, data: string): Result<void, TuiInputError> {
@@ -839,7 +911,7 @@ export class TuiAgentsRuntime {
     const state = peek(this.sessionsList.states.list)[conversationId];
     const now = this.clock.now();
     const tmuxLastOutputAt = config.input.tmuxSessionName
-      ? this.tmuxActivity.get(config.input.tmuxSessionName)
+      ? this.sweepTmuxActivity.get(config.input.tmuxSessionName)
       : undefined;
     const lastOutputAt = maxNullable(activity.lastOutputAt, tmuxLastOutputAt);
     // Interactive busy window, plus tmux-side liveness: recent output inside the
@@ -847,8 +919,52 @@ export class TuiAgentsRuntime {
     // output window would (it previously enriched the policy's lastOutputAt).
     const busy =
       (lastOutputAt !== null && now - lastOutputAt < BUSY_OUTPUT_WINDOW_MS) ||
-      (tmuxLastOutputAt !== undefined && now - tmuxLastOutputAt < this.tmuxKeepAliveMs);
+      (tmuxLastOutputAt !== undefined && now - tmuxLastOutputAt < this.tmuxKeepAliveMs) ||
+      this.detachedZellijSessionAlive(conversationId, config);
     return { running: state?.status === 'running', busy };
+  }
+
+  private hasTmuxConfigs(): boolean {
+    for (const config of this.configs.values()) {
+      if (config.input.tmuxSessionName) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Lists zellij only when a zellij-backed conversation has lost its PTY client;
+   * attached sessions are judged by PTY activity like everything else.
+   */
+  private async refreshDetachedZellijLiveness(): Promise<void> {
+    const detached = [...this.configs.entries()].some(
+      ([conversationId, config]) =>
+        config.input.zellijSessionName !== undefined &&
+        config.intent !== 'stopped' &&
+        !this.sessions.get(conversationId)?.pty
+    );
+    if (!detached) {
+      this.detachedZellijSessions = new Map();
+      this.zellijListingFailed = false;
+      return;
+    }
+    try {
+      this.detachedZellijSessions = await listZellijSessions(this.deps.exec);
+      this.zellijListingFailed = false;
+    } catch (error) {
+      this.zellijListingFailed = true;
+      this.deps.logger.warn('TuiAgentsRuntime: zellij listing failed; keeping detached sessions', {
+        error: String(error),
+      });
+    }
+  }
+
+  private detachedZellijSessionAlive(conversationId: string, config: TuiSessionConfig): boolean {
+    const sessionName = config.input.zellijSessionName;
+    if (!sessionName || this.sessions.get(conversationId)?.pty) return false;
+    return (
+      this.zellijListingFailed ||
+      activeZellijSessionFor(this.detachedZellijSessions, sessionName) !== undefined
+    );
   }
 
   private setResumeState(
@@ -924,6 +1040,7 @@ export class TuiAgentsRuntime {
         shellSetup: input.shellSetup,
         shellProfile,
         tmuxSessionName: input.tmuxSessionName,
+        zellijSessionName: input.zellijSessionName,
       },
       platform,
       env,
@@ -943,7 +1060,7 @@ export class TuiAgentsRuntime {
     generation: number,
     info: PtyExitInfo
   ): boolean {
-    if (config.input.tmuxSessionName || config.intent === 'stopped') return false;
+    if (hasMultiplexerSession(config.input) || config.intent === 'stopped') return false;
     if (!this.isUnexpectedExit(info)) return false;
     const current = this.configs.get(config.input.conversationId);
     if (!current || current.intent === 'stopped') return false;
@@ -967,24 +1084,77 @@ export class TuiAgentsRuntime {
     return info.exitCode !== 0 || info.signal !== null;
   }
 
-  private async killTmuxForConfig(config: TuiSessionConfig | undefined): Promise<void> {
+  /**
+   * Reconcile liveness: the multiplexer session must exist and, for zellij,
+   * be running. zellij matches by id hash so a session created under an
+   * earlier task label still counts.
+   */
+  private multiplexerSessionAlive(input: TuiAgentStartInput): boolean {
+    if (input.tmuxSessionName) return this.tmuxActivity.has(input.tmuxSessionName);
+    if (input.zellijSessionName) {
+      return activeZellijSessionFor(this.zellijSessions, input.zellijSessionName) !== undefined;
+    }
+    return false;
+  }
+
+  private async killMultiplexerForConfig(config: TuiSessionConfig | undefined): Promise<void> {
     if ((this.deps.platform ?? process.platform) === 'win32') return;
-    const sessionName = config?.input.tmuxSessionName;
-    if (!sessionName) return;
-    await killTmuxSession(this.deps.exec, sessionName, (error) => {
-      this.deps.logger.debug('TuiAgentsRuntime: tmux session not found or already stopped', {
-        sessionName,
+    const tmuxSessionName = config?.input.tmuxSessionName;
+    if (tmuxSessionName) {
+      await killTmuxSession(this.deps.exec, tmuxSessionName, (error) => {
+        this.deps.logger.debug('TuiAgentsRuntime: tmux session not found or already stopped', {
+          sessionName: tmuxSessionName,
+          error: String(error),
+        });
+      });
+      return;
+    }
+    const zellijSessionName = config?.input.zellijSessionName;
+    if (!zellijSessionName) return;
+    await killZellijSessionsMatching(this.deps.exec, zellijSessionName, (error) => {
+      this.deps.logger.debug('TuiAgentsRuntime: zellij session not found or already stopped', {
+        sessionName: zellijSessionName,
         error: String(error),
       });
     });
   }
 
   private normalizePlatformInput<T extends TuiAgentStartInput>(input: T): T {
-    if ((this.deps.platform ?? process.platform) !== 'win32' || !input.tmuxSessionName)
+    if ((this.deps.platform ?? process.platform) !== 'win32' || !hasMultiplexerSession(input)) {
       return input;
-    const { tmuxSessionName: _tmuxSessionName, ...normalized } = input;
+    }
+    const {
+      tmuxSessionName: _tmuxSessionName,
+      zellijSessionName: _zellijSessionName,
+      ...normalized
+    } = input;
     return normalized as T;
   }
+}
+
+/** Only active intents are resumed, so only they decide which multiplexers reconcile consults. */
+function intentUsesZellij(intent: SessionIntent): boolean {
+  return activeIntentHasStringField(intent, 'zellijSessionName');
+}
+
+function intentUsesTmux(intent: SessionIntent): boolean {
+  return activeIntentHasStringField(intent, 'tmuxSessionName');
+}
+
+function activeIntentHasStringField(intent: SessionIntent, field: string): boolean {
+  if (intent.status !== 'active') return false;
+  const payload: unknown = intent.payload;
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    typeof (payload as Record<string, unknown>)[field] === 'string'
+  );
+}
+
+function hasMultiplexerSession(
+  input: Pick<TuiAgentStartInput, 'tmuxSessionName' | 'zellijSessionName'>
+): boolean {
+  return Boolean(input.tmuxSessionName || input.zellijSessionName);
 }
 
 function maxNullable(a: number | null, b: number | null | undefined): number | null {

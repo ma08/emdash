@@ -2,6 +2,7 @@ import { getWindowsEnvValue } from '#primitives/agent-env/api';
 import { formatCommandLine, quoteArg, type NativeInvocation } from '#primitives/exec/api';
 import { planExecutableLaunch, type FileExists } from '#primitives/exec/node';
 import { buildTmuxShellLine } from './tmux';
+import { buildZellijShellLine } from './zellij';
 
 export type ResolvedPtyShellProfile = {
   id: string;
@@ -28,6 +29,7 @@ export type PtySpawnIntent =
       shellProfile?: ResolvedPtyShellProfile;
       shellSetup?: string;
       tmuxSessionName?: string;
+      zellijSessionName?: string;
     }
   | {
       kind: 'run-command';
@@ -36,9 +38,10 @@ export type PtySpawnIntent =
       shellProfile?: ResolvedPtyShellProfile;
       shellSetup?: string;
       tmuxSessionName?: string;
+      zellijSessionName?: string;
     };
 
-export type LocalPtySpawnWarning = 'tmux_unsupported_on_windows';
+export type LocalPtySpawnWarning = 'tmux_unsupported_on_windows' | 'zellij_unsupported_on_windows';
 
 export type ResolvedLocalPtySpawn = {
   invocation: NativeInvocation;
@@ -107,7 +110,35 @@ function wrapCmdExeCommandLine(commandLine: string): string {
 function windowsWarnings(intent: PtySpawnIntent): LocalPtySpawnWarning[] {
   const warnings: LocalPtySpawnWarning[] = [];
   if (intent.tmuxSessionName) warnings.push('tmux_unsupported_on_windows');
+  if (intent.zellijSessionName) warnings.push('zellij_unsupported_on_windows');
   return warnings;
+}
+
+function hasMultiplexer(intent: PtySpawnIntent): boolean {
+  return Boolean(intent.tmuxSessionName || intent.zellijSessionName);
+}
+
+/**
+ * Wraps `commandLine` in the persistent-session multiplexer the intent asks
+ * for. tmux takes precedence should both names be present. The zellij pane
+ * runs the command through the resolved shell so no extra `/bin/sh` hop sits
+ * between the multiplexer and a TUI agent.
+ */
+function multiplexerShellLine(
+  intent: PtySpawnIntent,
+  commandLine: string,
+  shell: string,
+  commandArgs: readonly string[]
+): string | null {
+  if (intent.tmuxSessionName) return buildTmuxShellLine(intent.tmuxSessionName, commandLine);
+  if (intent.zellijSessionName) {
+    return buildZellijShellLine(intent.zellijSessionName, commandLine, intent.cwd, {
+      shell,
+      shellArgs: commandArgs,
+      outerShellFamily: intent.shellProfile?.family === 'csh' ? 'csh' : 'posix',
+    });
+  }
+  return null;
 }
 
 function combineShellSetup(
@@ -249,14 +280,14 @@ function resolvePosixSpawn(
   const setupWrapperArgs = getSetupWrapperArgs(intent);
 
   if (intent.kind === 'interactive-shell') {
-    if (intent.tmuxSessionName) {
+    if (hasMultiplexer(intent)) {
       const commandLine = intent.shellSetup
         ? `${intent.shellSetup} && exec ${quoteArg(shell, 'posix')} ${interactiveArgs.join(' ')}`
         : `exec ${quoteArg(shell, 'posix')} ${interactiveArgs.join(' ')}`;
       return {
         invocation: argvInvocation(shell, [
           ...(intent.shellSetup ? setupWrapperArgs : commandArgs),
-          buildTmuxShellLine(intent.tmuxSessionName, commandLine),
+          multiplexerShellLine(intent, commandLine, shell, commandArgs) ?? commandLine,
         ]),
         cwd: intent.cwd,
         warnings: [],
@@ -291,7 +322,7 @@ function resolvePosixSpawn(
     );
   }
 
-  if (intent.command.kind === 'argv' && !intent.shellSetup && !intent.tmuxSessionName) {
+  if (intent.command.kind === 'argv' && !intent.shellSetup && !hasMultiplexer(intent)) {
     const plan = planExecutableLaunch({
       platform,
       command: intent.command.command,
@@ -310,12 +341,10 @@ function resolvePosixSpawn(
     ? `${intent.shellSetup} && ${commandLine}`
     : commandLine;
 
-  if (intent.tmuxSessionName) {
+  const multiplexed = multiplexerShellLine(intent, fullCommandLine, shell, commandArgs);
+  if (multiplexed) {
     return {
-      invocation: argvInvocation(shell, [
-        ...commandArgs,
-        buildTmuxShellLine(intent.tmuxSessionName, fullCommandLine),
-      ]),
+      invocation: argvInvocation(shell, [...commandArgs, multiplexed]),
       cwd: intent.cwd,
       warnings: [],
     };
