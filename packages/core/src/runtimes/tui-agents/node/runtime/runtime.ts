@@ -398,14 +398,20 @@ export class TuiAgentsRuntime {
   }
 
   async stopSession(conversationId: string): Promise<Result<void, TuiSessionControlError>> {
-    this.bumpGeneration(conversationId);
+    const stopGeneration = this.bumpGeneration(conversationId);
     const config = this.configs.get(conversationId);
     if (config) this.configs.set(conversationId, { ...config, intent: 'stopped' });
     this.unexpectedRespawns.delete(conversationId);
     // Not awaited, but serialized with launches: the zellij kill lists and
     // deletes by id hash, so a restart must not create its session before
-    // the stale cleanup has finished looking.
-    void this.launchMutex.runExclusive(conversationId, () => this.killMultiplexerForConfig(config));
+    // the stale cleanup has finished looking. A launch that was already
+    // queued ahead of this cleanup wins instead, exactly as it did when the
+    // tmux kill fired immediately: once it has re-created or re-attached the
+    // session the generation has moved on and the stale kill stands down.
+    void this.launchMutex.runExclusive(conversationId, async () => {
+      if (this.generations.get(conversationId) !== stopGeneration) return;
+      await this.killMultiplexerForConfig(config);
+    });
     this.registry.dispose(conversationId);
     const active = this.sessions.get(conversationId);
     if (active) active.pty = null;

@@ -135,6 +135,7 @@ function multiplexerShellLine(
     return buildZellijShellLine(intent.zellijSessionName, commandLine, intent.cwd, {
       shell,
       shellArgs: commandArgs,
+      outerShellFamily: intent.shellProfile?.family === 'csh' ? 'csh' : 'posix',
     });
   }
   return null;

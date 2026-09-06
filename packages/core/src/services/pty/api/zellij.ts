@@ -40,6 +40,8 @@ export type ZellijShellOptions = {
   shell?: string;
   /** Arguments that make `shell` run a command line; defaults to `-c`. */
   shellArgs?: readonly string[];
+  /** Quoting family of the shell that receives the whole line; defaults to posix. */
+  outerShellFamily?: 'posix' | 'csh';
 };
 
 export function makeZellijSessionLabel(value: string | undefined): string {
@@ -110,7 +112,10 @@ function posix(value: string): string {
 
 /**
  * The POSIX attach script for one persistent zellij session, the zellij
- * counterpart of `buildTmuxShellLine`'s inner script.
+ * counterpart of `buildTmuxShellLine`'s inner script. It is a single line:
+ * the outer shell that receives it may be csh, which rejects newlines inside
+ * quotes, and the layout is written with one `printf '%s\n'` argument per
+ * line for the same reason.
  *
  * - Sessions are matched by the id hash in their name, not the whole name, so
  *   a session created under an earlier task label is still found after the
@@ -121,7 +126,8 @@ function posix(value: string): string {
  *   is created in the foreground from a temporary KDL layout, so the pane
  *   inherits the real terminal size. Resurrecting a remnant would re-run its
  *   stale command line; the caller's current command (with its resume
- *   arguments) must win.
+ *   arguments) must win, so a remnant that survives deletion under the
+ *   requested name aborts the launch instead of being resurrected.
  * - The pane runs `<shell> <shellArgs> <commandLine>` directly, no extra
  *   `/bin/sh` hop, so TUI agents can switch the terminal to raw mode.
  * - A missing `zellij` binary fails fast with exit 127 and a clear message.
@@ -137,7 +143,7 @@ export function buildZellijAttachScript(
   const sessionHash = parsed?.sessionHash ?? '';
   const shell = options.shell?.trim() || '/bin/sh';
   const shellArgs = options.shellArgs?.length ? [...options.shellArgs] : ['-c'];
-  const layout = [
+  const layoutLines = [
     'layout {',
     `  tab name=${kdlQuote(label)} {`,
     `    pane command=${kdlQuote(shell)} cwd=${kdlQuote(cwd)} close_on_exit=true focus=true name=${kdlQuote(label)} {`,
@@ -145,96 +151,44 @@ export function buildZellijAttachScript(
     '    }',
     '  }',
     '}',
-    '',
-  ].join('\n');
+  ];
+  const nameMatch = `$1 ~ ("^${ZELLIJ_SESSION_PREFIX}[a-z0-9-]+[.]" hash "$")`;
 
   return [
     'set -eu',
-    'if ! command -v zellij >/dev/null 2>&1; then',
-    '  echo "Emdash: zellij is not installed or not on PATH" >&2',
-    '  exit 127',
-    'fi',
+    'if ! command -v zellij >/dev/null 2>&1; then echo "Emdash: zellij is not installed or not on PATH" >&2; exit 127; fi',
     `session=${posix(sessionName)}`,
     `session_hash=${posix(sessionHash)}`,
     'tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/emdash-zellij.XXXXXX")',
     'layout_file="$tmpdir/layout.kdl"',
-    'cleanup() {',
-    '  delay="${EMDASH_ZELLIJ_LAYOUT_CLEANUP_DELAY_SECONDS:-30}"',
-    '  case "$delay" in \'\' | *[!0-9]*) delay=30 ;; esac',
-    '  if [ "$delay" = "0" ]; then',
-    '    rm -rf "$tmpdir"',
-    '  else',
-    `    nohup /bin/sh -c 'sleep "$1"; rm -rf "$2"' sh "$delay" "$tmpdir" >/dev/null 2>&1 &`,
-    '  fi',
-    '}',
-    'finish() {',
-    '  finish_status=$?',
-    '  trap - EXIT HUP INT TERM',
-    '  cleanup',
-    '  exit "$finish_status"',
-    '}',
+    'cleanup() { delay="${EMDASH_ZELLIJ_LAYOUT_CLEANUP_DELAY_SECONDS:-30}"; case "$delay" in \'\' | *[!0-9]*) delay=30 ;; esac; if [ "$delay" = "0" ]; then rm -rf "$tmpdir"; else nohup /bin/sh -c \'sleep "$1"; rm -rf "$2"\' sh "$delay" "$tmpdir" >/dev/null 2>&1 & fi; }',
+    'finish() { finish_status=$?; trap - EXIT HUP INT TERM; cleanup; exit "$finish_status"; }',
     'trap finish EXIT HUP INT TERM',
-    `layout=${posix(layout)}`,
-    `printf '%s' "$layout" > "$layout_file"`,
-    '# Emdash zellij session names are whitespace-free; no-formatting keeps the EXITED marker parseable.',
-    '# Sessions are matched by the id hash so a rename between launches still finds the live session.',
-    'list_sessions() {',
-    '  zellij list-sessions --no-formatting 2>/dev/null || true',
-    '}',
-    'active_session_named() {',
-    `  list_sessions | awk -v hash="$session_hash" '`,
-    `    index($0, "(EXITED") == 0 && $1 ~ ("^${ZELLIJ_SESSION_PREFIX}[a-z0-9-]+[.]" hash "$") { print $1; exit }`,
-    "  '",
-    '}',
-    'delete_remnants() {',
-    `  list_sessions | awk -v hash="$session_hash" '`,
-    `    index($0, "(EXITED") > 0 && $1 ~ ("^${ZELLIJ_SESSION_PREFIX}[a-z0-9-]+[.]" hash "$") { print $1 }`,
-    "  ' | while IFS= read -r remnant; do",
-    '    zellij delete-session "$remnant" >/dev/null 2>&1 || true',
-    '  done',
-    '}',
-    'attach_session() {',
-    '  zellij attach "$1" options --on-force-close detach',
-    '}',
-    'create_or_attach_session() {',
-    '  delete_remnants',
-    `  if zellij attach --create "$session" options --default-layout "$layout_file" --scroll-buffer-size ${ZELLIJ_SCROLL_BUFFER_SIZE} --on-force-close detach; then`,
-    '    return 0',
-    '  else',
-    '    create_status=$?',
-    '  fi',
-    '  existing=$(active_session_named)',
-    '  if [ -n "$existing" ]; then',
-    '    attach_session "$existing"',
-    '  else',
-    '    exit "$create_status"',
-    '  fi',
-    '}',
+    `printf '%s\\n' ${layoutLines.map(posix).join(' ')} > "$layout_file"`,
+    'list_sessions() { zellij list-sessions --no-formatting 2>/dev/null || true; }',
+    `active_session_named() { list_sessions | awk -v hash="$session_hash" 'index($0, "(EXITED") == 0 && ${nameMatch} { print $1; exit }'; }`,
+    `delete_remnants() { list_sessions | awk -v hash="$session_hash" 'index($0, "(EXITED") > 0 && ${nameMatch} { print $1 }' | while IFS= read -r remnant; do zellij delete-session "$remnant" >/dev/null 2>&1 || true; done; }`,
+    `stale_named_remnant_exists() { list_sessions | awk -v session="$session" 'index($0, "(EXITED") > 0 && $1 == session { found = 1 } END { exit found ? 0 : 1 }'; }`,
+    'attach_session() { zellij attach "$1" options --on-force-close detach; }',
+    `create_or_attach_session() { delete_remnants; if stale_named_remnant_exists; then echo "Emdash: could not delete the stale zellij session $session" >&2; exit 1; fi; if zellij attach --create "$session" options --default-layout "$layout_file" --scroll-buffer-size ${ZELLIJ_SCROLL_BUFFER_SIZE} --on-force-close detach; then return 0; else create_status=$?; fi; existing=$(active_session_named); if [ -n "$existing" ]; then attach_session "$existing"; else exit "$create_status"; fi; }`,
     'existing=$(active_session_named)',
-    'if [ -n "$existing" ]; then',
-    '  if attach_session "$existing"; then',
-    '    :',
-    '  else',
-    '    attach_status=$?',
-    '    if [ -n "$(active_session_named)" ]; then',
-    '      exit "$attach_status"',
-    '    fi',
-    '    create_or_attach_session',
-    '  fi',
-    'else',
-    '  create_or_attach_session',
-    'fi',
-  ].join('\n');
+    'if [ -n "$existing" ]; then if attach_session "$existing"; then :; else attach_status=$?; if [ -n "$(active_session_named)" ]; then exit "$attach_status"; fi; create_or_attach_session; fi; else create_or_attach_session; fi',
+  ].join('; ');
 }
 
-/** `/bin/sh -c '<attach script>'`, ready to be the last argument of a shell `-c` invocation. */
+/**
+ * `/bin/sh -c '<attach script>'`, ready to be the last argument of a shell
+ * `-c` invocation. `outerShellFamily` picks the quoting for the shell that
+ * receives the line: csh needs `!` escaped.
+ */
 export function buildZellijShellLine(
   sessionName: string,
   commandLine: string,
   cwd: string,
   options: ZellijShellOptions = {}
 ): string {
-  return `/bin/sh -c ${posix(buildZellijAttachScript(sessionName, commandLine, cwd, options))}`;
+  const script = buildZellijAttachScript(sessionName, commandLine, cwd, options);
+  return `/bin/sh -c ${quoteArg(script, options.outerShellFamily ?? 'posix')}`;
 }
 
 /**

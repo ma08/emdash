@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import type { IExecutionContext } from '#primitives/exec/api';
@@ -110,12 +111,34 @@ describe('buildZellijShellLine', () => {
     expect(script).toContain('delete_remnants');
   });
 
-  it('emits a script /bin/sh can parse', async () => {
+  it('emits a single-line script /bin/sh can parse', async () => {
     const script = buildZellijAttachScript(sessionName, `echo "it's" && codex`, "/work/it's here", {
       shell: '/bin/zsh',
     });
 
+    expect(script).not.toContain('\n');
     await expect(promisify(execFile)('sh', ['-n', '-c', script])).resolves.toBeDefined();
+  });
+
+  it('emits a line csh can parse when it is the outer shell', async () => {
+    const line = buildZellijShellLine(sessionName, `echo "it's" && codex`, "/work/it's here", {
+      shell: '/bin/tcsh',
+      shellArgs: ['-c'],
+      outerShellFamily: 'csh',
+    });
+
+    expect(line).not.toContain('\n');
+    expect(line).toContain('\\!');
+    const tcsh = ['/bin/tcsh', '/usr/bin/tcsh', '/bin/csh'].find((path) => existsSync(path));
+    if (!tcsh) return;
+    await expect(promisify(execFile)(tcsh, ['-n', '-c', line])).resolves.toBeDefined();
+  });
+
+  it('aborts instead of resurrecting a stale remnant that could not be deleted', () => {
+    const script = buildZellijAttachScript(sessionName, 'codex', '/work/tree');
+
+    expect(script).toContain('stale_named_remnant_exists');
+    expect(script).toContain('could not delete the stale zellij session');
   });
 
   it('writes control characters as braced KDL escapes and keeps literal backslash text', () => {
