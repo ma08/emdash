@@ -55,6 +55,7 @@ export {
   makeZellijSessionName,
   parseZellijSessionList,
   parseZellijSessionName,
+  ZELLIJ_SESSION_NAME_MAX_LENGTH,
   ZELLIJ_SESSION_PREFIX,
   zellijSessionHash,
   type ZellijSessionInfo,

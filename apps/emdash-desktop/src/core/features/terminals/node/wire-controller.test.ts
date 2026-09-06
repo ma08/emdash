@@ -294,7 +294,7 @@ describe('createTerminalsWireController zellij sessions', () => {
       expect.objectContaining({
         spec: expect.objectContaining({
           tmux: false,
-          zellijSessionName: expect.stringMatching(/^emdash-fix-login-bug\.[A-Za-z0-9_-]{10}$/),
+          zellijSessionName: expect.stringMatching(/^em-fix-login\.[A-Za-z0-9_-]{8}$/),
         }),
       })
     );

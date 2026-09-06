@@ -5,16 +5,22 @@ import { isMissingBinaryFailure, readExecFailure } from './exec-failure';
 /**
  * zellij as a persistent-session multiplexer next to tmux (`./tmux.ts`).
  *
- * Session names are `emdash-<label>.<hash>`: a short human-readable label so
- * users can find the session in `zellij list-sessions`, plus a hash of the PTY
- * session id so desktop cleanup can match sessions back to their ids without
- * knowing the label. Names stay short because zellij places them in socket
- * paths.
+ * Session names are `em-<label>.<hash>`: a short human-readable label so users
+ * can find the session in `zellij list-sessions`, plus a hash of the PTY
+ * session id so every lookup and cleanup can match sessions back to their ids
+ * without knowing the label.
+ *
+ * Names are capped at 22 characters because zellij puts them in a Unix socket
+ * path and macOS limits those to 103 bytes: a default `$TMPDIR`
+ * (`/var/folders/xx/<30 chars>/T/`, 49) plus zellij's `zellij-<uid>/` (11 or
+ * 12) and `contract_version_1/` (19, zellij 0.44) leaves about 24 for the
+ * name.
  */
-export const ZELLIJ_SESSION_PREFIX = 'emdash-';
+export const ZELLIJ_SESSION_PREFIX = 'em-';
+export const ZELLIJ_SESSION_NAME_MAX_LENGTH = 22;
 const DEFAULT_ZELLIJ_LABEL = 'session';
-const MAX_ZELLIJ_LABEL_LENGTH = 20;
-const ZELLIJ_SESSION_HASH_LENGTH = 10;
+const MAX_ZELLIJ_LABEL_LENGTH = 10;
+const ZELLIJ_SESSION_HASH_LENGTH = 8;
 const SESSION_HASH_RE = /^[A-Za-z0-9_-]+$/;
 const SESSION_LABEL_RE = /^[a-z0-9-]+$/;
 
@@ -73,9 +79,25 @@ export function isZellijSessionForPtySessionId(sessionName: string, sessionId: s
   return parsed !== null && parsed.sessionHash === zellijSessionHash(sessionId);
 }
 
-/** KDL v1 string: JSON escapes are compatible except that unicode escapes are braced. */
+/**
+ * KDL v1 quoted string. Escapes are written by hand rather than through
+ * `JSON.stringify` so a literal backslash sequence in a prompt (for example
+ * the text `\\u001b`) stays literal, while real control characters use KDL's
+ * braced `\\u{..}` form.
+ */
 function kdlQuote(value: string): string {
-  return JSON.stringify(value).replace(/\\u([0-9a-fA-F]{4})/g, '\\u{$1}');
+  let out = '"';
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (char === '"') out += '\\"';
+    else if (char === '\\') out += '\\\\';
+    else if (char === '\n') out += '\\n';
+    else if (char === '\r') out += '\\r';
+    else if (char === '\t') out += '\\t';
+    else if (code < 0x20 || code === 0x7f) out += `\\u{${code.toString(16)}}`;
+    else out += char;
+  }
+  return `${out}"`;
 }
 
 function posix(value: string): string {
@@ -157,12 +179,12 @@ export function buildZellijAttachScript(
     '}',
     'active_session_named() {',
     `  list_sessions | awk -v hash="$session_hash" '`,
-    '    index($0, "(EXITED") == 0 && $1 ~ ("^emdash-[a-z0-9-]+[.]" hash "$") { print $1; exit }',
+    `    index($0, "(EXITED") == 0 && $1 ~ ("^${ZELLIJ_SESSION_PREFIX}[a-z0-9-]+[.]" hash "$") { print $1; exit }`,
     "  '",
     '}',
     'delete_remnants() {',
     `  list_sessions | awk -v hash="$session_hash" '`,
-    '    index($0, "(EXITED") > 0 && $1 ~ ("^emdash-[a-z0-9-]+[.]" hash "$") { print $1 }',
+    `    index($0, "(EXITED") > 0 && $1 ~ ("^${ZELLIJ_SESSION_PREFIX}[a-z0-9-]+[.]" hash "$") { print $1 }`,
     "  ' | while IFS= read -r remnant; do",
     '    zellij delete-session "$remnant" >/dev/null 2>&1 || true',
     '  done',

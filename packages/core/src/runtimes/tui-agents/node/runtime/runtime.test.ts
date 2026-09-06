@@ -680,7 +680,7 @@ function leakContainers(runtime: TuiAgentsRuntime): LeakCheckContainer[] {
 }
 
 describe('TuiAgentsRuntime zellij sessions', () => {
-  const ZELLIJ_SESSION = 'emdash-my-task.abcdefghij';
+  const ZELLIJ_SESSION = 'em-my-task.abcdefgh';
 
   function zellijListing(lines: string[]) {
     return vi.fn((command: string) =>
@@ -731,7 +731,7 @@ describe('TuiAgentsRuntime zellij sessions', () => {
   });
 
   it('stops and deletes sessions while cleaning up zellij, under any label', async () => {
-    const renamed = 'emdash-renamed.abcdefghij';
+    const renamed = 'em-renamed.abcdefgh';
     const exec = zellijListing([`${renamed} [Created 1m ago]`]);
     const { runtime, spawner } = createRuntime({ exec: { exec } });
 
@@ -769,6 +769,38 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     expect(spawner.specs).toHaveLength(1);
 
     releaseListing?.();
+    await expect(restart).resolves.toEqual(ok({ outcome: 'started' }));
+
+    expect(events).toEqual(['list', `delete:${ZELLIJ_SESSION}`]);
+    expect(spawner.specs).toHaveLength(2);
+  });
+
+  it("makes a restart wait for a deleted session's zellij cleanup", async () => {
+    let releaseListing: (() => void) | undefined;
+    const events: string[] = [];
+    const exec = vi.fn((command: string, args: string[]) => {
+      if (command !== 'zellij') return Promise.resolve({ stdout: '', stderr: '' });
+      if (args[0] === 'list-sessions') {
+        events.push('list');
+        return new Promise<{ stdout: string; stderr: string }>((resolve) => {
+          releaseListing = () =>
+            resolve({ stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' });
+        });
+      }
+      events.push(`delete:${args[2]}`);
+      return Promise.resolve({ stdout: '', stderr: '' });
+    });
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    const deletion = runtime.deleteSession('conversation-1');
+    await vi.waitFor(() => expect(events).toEqual(['list']));
+    const restart = runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(spawner.specs).toHaveLength(1);
+
+    releaseListing?.();
+    await deletion;
     await expect(restart).resolves.toEqual(ok({ outcome: 'started' }));
 
     expect(events).toEqual(['list', `delete:${ZELLIJ_SESSION}`]);
@@ -813,6 +845,31 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     expect(spawner.specs).toHaveLength(1);
   });
 
+  it('ignores suspended zellij intents when deciding whether to list zellij', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      sessionId: 'provider-session',
+      payload: startInput({ sessionId: 'provider-session', tmuxSessionName: 'emdash-test' }),
+    });
+    await intents.saveActive({
+      conversationId: 'conversation-2',
+      payload: startInput({ conversationId: 'conversation-2', zellijSessionName: ZELLIJ_SESSION }),
+    });
+    await intents.markSuspended('conversation-2', 'user');
+    const exec = vi.fn((command: string) =>
+      command === 'zellij'
+        ? Promise.reject({ exitCode: 2, stderr: 'permission denied' })
+        : Promise.resolve({ stdout: 'emdash-test\t42\n', stderr: '' })
+    );
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(exec).not.toHaveBeenCalledWith('zellij', expect.anything());
+    expect(spawner.specs).toHaveLength(1);
+  });
+
   it('reconciles a zellij intent whose session was created under an earlier task label', async () => {
     const intents = createMemorySessionIntentStore();
     await intents.saveActive({
@@ -820,7 +877,7 @@ describe('TuiAgentsRuntime zellij sessions', () => {
       sessionId: 'provider-session',
       payload: startInput({ sessionId: 'provider-session', zellijSessionName: ZELLIJ_SESSION }),
     });
-    const exec = zellijListing(['emdash-older-label.abcdefghij [Created 2h 3m ago]']);
+    const exec = zellijListing(['em-older-lbl.abcdefgh [Created 2h 3m ago]']);
     const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
 
     await runtime.reconcile();

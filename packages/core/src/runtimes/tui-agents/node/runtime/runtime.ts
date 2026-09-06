@@ -391,7 +391,7 @@ export class TuiAgentsRuntime {
   }
 
   async deleteSession(conversationId: string): Promise<Result<void, TuiSessionControlError>> {
-    await this.lifecycle.evict(conversationId, { cause: 'user', intent: 'remove' });
+    await this.evictSerialized(conversationId, { cause: 'user', intent: 'remove' });
     return ok(undefined);
   }
 
@@ -401,13 +401,29 @@ export class TuiAgentsRuntime {
   ): Promise<Result<void, TuiSessionControlError>> {
     const config = this.configs.get(conversationId);
     if (!config || config.intent === 'stopped') return ok(undefined);
-    await this.lifecycle.evict(conversationId, { cause, intent: 'suspend' });
+    await this.evictSerialized(conversationId, { cause, intent: 'suspend' });
     return ok(undefined);
   }
 
   async killSession(conversationId: string): Promise<Result<void, TuiSessionControlError>> {
-    await this.lifecycle.evict(conversationId, { cause: 'user', intent: 'remove' });
+    await this.evictSerialized(conversationId, { cause: 'user', intent: 'remove' });
     return ok(undefined);
+  }
+
+  /**
+   * Eviction under the per-conversation launch mutex. The zellij kill inside
+   * it lists and deletes sessions by id hash, so a start or resume that
+   * overlaps an eviction must wait for the whole teardown rather than create
+   * its session between two evict steps. Nothing evicts while holding the
+   * mutex, so this cannot deadlock.
+   */
+  private evictSerialized(
+    conversationId: string,
+    options: Parameters<ConversationSessionLifecycle['evict']>[1]
+  ): Promise<void> {
+    return this.launchMutex.runExclusive(conversationId, () =>
+      this.lifecycle.evict(conversationId, options)
+    );
   }
 
   sendInput(conversationId: string, data: string): Result<void, TuiInputError> {
@@ -1038,7 +1054,9 @@ export class TuiAgentsRuntime {
   }
 }
 
+/** Only active intents are resumed, so only they decide whether zellij must be consulted. */
 function intentUsesZellij(intent: SessionIntent): boolean {
+  if (intent.status !== 'active') return false;
   const payload: unknown = intent.payload;
   return (
     typeof payload === 'object' &&

@@ -15,6 +15,7 @@ import {
   makeZellijSessionName,
   parseZellijSessionList,
   parseZellijSessionName,
+  ZELLIJ_SESSION_NAME_MAX_LENGTH,
   zellijSessionHash,
 } from './zellij';
 
@@ -24,27 +25,30 @@ describe('makeZellijSessionName', () => {
   it('combines a readable label with a short deterministic session hash', () => {
     const name = makeZellijSessionName(SESSION_ID, 'Fix login bug');
 
-    expect(name).toBe(`emdash-fix-login-bug.${zellijSessionHash(SESSION_ID)}`);
-    expect(name).toMatch(/^emdash-[a-z0-9-]+\.[A-Za-z0-9_-]{10}$/);
+    expect(name).toBe(`em-fix-login.${zellijSessionHash(SESSION_ID)}`);
+    expect(name).toMatch(/^em-[a-z0-9-]+\.[A-Za-z0-9_-]{8}$/);
     expect(makeZellijSessionName(SESSION_ID, 'Fix login bug')).toBe(name);
     expect(makeZellijSessionName('project-1:task-1:conversation-2', 'Fix login bug')).not.toBe(
       name
     );
   });
 
-  it('keeps long real-world ids short enough for zellij socket paths', () => {
+  it('keeps every name within the macOS socket path budget', () => {
     const longId = `${'p'.repeat(64)}:${'t'.repeat(64)}:${'c'.repeat(64)}`;
     const name = makeZellijSessionName(longId, 'A very long task name that keeps going and going');
 
-    expect(name.length).toBeLessThanOrEqual('emdash-'.length + 20 + 1 + 10);
+    expect(name.length).toBeLessThanOrEqual(ZELLIJ_SESSION_NAME_MAX_LENGTH);
+    // Default macOS TMPDIR (49) + zellij-<uid>/ (12) + contract_version_1/ (19) + name.
+    expect(49 + 12 + 19 + name.length).toBeLessThanOrEqual(103);
   });
 
   it('sanitizes labels and falls back when empty', () => {
-    expect(makeZellijSessionLabel('  Hello, World! 42 ')).toBe('hello-world-42');
+    expect(makeZellijSessionLabel('  Hello, World! 42 ')).toBe('hello-worl');
+    expect(makeZellijSessionLabel('Fix login')).toBe('fix-login');
     expect(makeZellijSessionLabel('---')).toBe('session');
     expect(makeZellijSessionLabel(undefined)).toBe('session');
-    expect(makeZellijSessionLabel('abcdefghijklmnopqrstuvwxyz')).toBe('abcdefghijklmnopqrst');
-    expect(makeZellijSessionLabel('abcdefghijklmnopqrs-tail')).toBe('abcdefghijklmnopqrs');
+    expect(makeZellijSessionLabel('abcdefghijklmnopqrstuvwxyz')).toBe('abcdefghij');
+    expect(makeZellijSessionLabel('abcdefghi-tail')).toBe('abcdefghi');
   });
 });
 
@@ -60,11 +64,12 @@ describe('parseZellijSessionName', () => {
 
   it('returns null for names that are not Emdash zellij sessions', () => {
     expect(parseZellijSessionName('scratch')).toBeNull();
-    expect(parseZellijSessionName('emdash-')).toBeNull();
-    expect(parseZellijSessionName('emdash-nohash')).toBeNull();
-    expect(parseZellijSessionName('emdash-label.short')).toBeNull();
-    expect(parseZellijSessionName('emdash-Bad Label.abcdefghij')).toBeNull();
-    expect(parseZellijSessionName('emdash-label.abcdefghi/')).toBeNull();
+    expect(parseZellijSessionName('emdash-label.abcdefgh')).toBeNull();
+    expect(parseZellijSessionName('em-')).toBeNull();
+    expect(parseZellijSessionName('em-nohash')).toBeNull();
+    expect(parseZellijSessionName('em-label.short')).toBeNull();
+    expect(parseZellijSessionName('em-Bad Label.abcdefgh')).toBeNull();
+    expect(parseZellijSessionName('em-label.abcdefg/')).toBeNull();
   });
 
   it('matches sessions back to their PTY session id', () => {
@@ -72,7 +77,7 @@ describe('parseZellijSessionName', () => {
 
     expect(isZellijSessionForPtySessionId(name, SESSION_ID)).toBe(true);
     expect(isZellijSessionForPtySessionId(name, 'project-1:task-1:other')).toBe(false);
-    expect(isZellijSessionForPtySessionId('emdash-other', SESSION_ID)).toBe(false);
+    expect(isZellijSessionForPtySessionId('em-other', SESSION_ID)).toBe(false);
   });
 });
 
@@ -100,7 +105,7 @@ describe('buildZellijShellLine', () => {
     const script = buildZellijAttachScript(sessionName, 'codex', '/work/tree');
 
     expect(script).toContain(`session_hash=${zellijSessionHash(SESSION_ID)}`);
-    expect(script).toContain('$1 ~ ("^emdash-[a-z0-9-]+[.]" hash "$")');
+    expect(script).toContain('$1 ~ ("^em-[a-z0-9-]+[.]" hash "$")');
     expect(script).toContain('existing=$(active_session_named)');
     expect(script).toContain('delete_remnants');
   });
@@ -113,11 +118,15 @@ describe('buildZellijShellLine', () => {
     await expect(promisify(execFile)('sh', ['-n', '-c', script])).resolves.toBeDefined();
   });
 
-  it('writes control characters in the KDL layout as braced unicode escapes', () => {
-    const script = buildZellijAttachScript(sessionName, 'printf "\u001b[0m"', '/work/tree');
+  it('writes control characters as braced KDL escapes and keeps literal backslash text', () => {
+    const control = buildZellijAttachScript(sessionName, 'printf "\u001b[0m"', '/work/tree');
+    expect(control).toContain('\\u{1b}');
 
-    expect(script).toContain('\\u{001b}');
-    expect(script).not.toContain('\\u001b');
+    // A prompt that literally contains the four characters \u001b must arrive
+    // unchanged: KDL decodes \\ to one backslash, so the layout carries \\u001b.
+    const literal = buildZellijAttachScript(sessionName, 'echo \\u001b', '/work/tree');
+    expect(literal).toContain('echo \\\\u001b');
+    expect(literal).not.toContain('\\u{');
   });
 
   it('validates the layout cleanup delay before handing it to sleep', () => {
@@ -163,8 +172,8 @@ describe('parseZellijSessionList', () => {
   it('separates active sessions from exited resurrectable ones and ignores other names', () => {
     const parsed = parseZellijSessionList(
       [
-        'emdash-my-task.abcdefghij [Created 2h 3m ago]',
-        'emdash-other.klmnopqrst [Created 5s ago] (EXITED - attach to resurrect)',
+        'em-my-task.abcdefgh [Created 2h 3m ago]',
+        'em-other.klmnopqr [Created 5s ago] (EXITED - attach to resurrect)',
         'scratch [Created 1m ago]',
         '',
         'No active zellij sessions found.',
@@ -173,8 +182,8 @@ describe('parseZellijSessionList', () => {
 
     expect(parsed).toEqual(
       new Map([
-        ['emdash-my-task.abcdefghij', { active: true }],
-        ['emdash-other.klmnopqrst', { active: false }],
+        ['em-my-task.abcdefgh', { active: true }],
+        ['em-other.klmnopqr', { active: false }],
       ])
     );
   });
@@ -183,14 +192,14 @@ describe('parseZellijSessionList', () => {
 describe('listZellijSessions', () => {
   it('runs one zellij list-sessions command', async () => {
     const exec = vi.fn(async () => ({
-      stdout: 'emdash-my-task.abcdefghij [Created 2h 3m ago]\n',
+      stdout: 'em-my-task.abcdefgh [Created 2h 3m ago]\n',
       stderr: '',
     }));
 
     const sessions = await listZellijSessions(stubExecContext(exec));
 
     expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting']);
-    expect(sessions).toEqual(new Map([['emdash-my-task.abcdefghij', { active: true }]]));
+    expect(sessions).toEqual(new Map([['em-my-task.abcdefgh', { active: true }]]));
   });
 
   it('returns an empty map when zellij reports no sessions', async () => {
@@ -228,16 +237,16 @@ describe('listZellijSessions', () => {
 describe('killZellijSession', () => {
   it('force-deletes the session and treats "not found" as success', async () => {
     const exec = vi.fn(async () => {
-      throw { exitCode: 2, stderr: 'Session "emdash-my-task.abcdefghij" not found' };
+      throw { exitCode: 2, stderr: 'Session "em-my-task.abcdefgh" not found' };
     });
     const onError = vi.fn();
 
-    await killZellijSession(stubExecContext(exec), 'emdash-my-task.abcdefghij', onError);
+    await killZellijSession(stubExecContext(exec), 'em-my-task.abcdefgh', onError);
 
     expect(exec).toHaveBeenCalledWith('zellij', [
       'delete-session',
       '--force',
-      'emdash-my-task.abcdefghij',
+      'em-my-task.abcdefgh',
     ]);
     expect(onError).not.toHaveBeenCalled();
   });
@@ -248,7 +257,7 @@ describe('killZellijSession', () => {
     });
     const onError = vi.fn();
 
-    await killZellijSession(stubExecContext(exec), 'emdash-my-task.abcdefghij', onError);
+    await killZellijSession(stubExecContext(exec), 'em-my-task.abcdefgh', onError);
 
     expect(onError).toHaveBeenCalledTimes(1);
   });

@@ -609,7 +609,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<voi
 }
 
 describe('TerminalsRuntime zellij sessions', () => {
-  const ZELLIJ_SESSION = 'emdash-my-task.abcdefghij';
+  const ZELLIJ_SESSION = 'em-my-task.abcdefgh';
 
   it('spawns interactive terminals inside the named zellij session', async () => {
     const exec = fakeExec();
@@ -663,7 +663,7 @@ describe('TerminalsRuntime zellij sessions', () => {
     exec.exec.mockImplementation(async (_command: string, args: string[]) =>
       args[0] === 'list-sessions'
         ? {
-            stdout: `${wanted} [Created 1m ago]\nemdash-other.klmnopqrst [Created 1m ago]\n`,
+            stdout: `${wanted} [Created 1m ago]\nem-other.klmnopqr [Created 1m ago]\n`,
             stderr: '',
           }
         : { stdout: '', stderr: '' }
