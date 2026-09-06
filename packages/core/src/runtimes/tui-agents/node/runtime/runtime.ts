@@ -96,11 +96,17 @@ export class TuiAgentsRuntime {
   private readonly workspaceTrust: TuiWorkspaceTrust;
   private readonly clock: Clock;
   private readonly lifecycle: ConversationSessionLifecycle;
-  private tmuxActivity = new Map<string, number>();
   /**
-   * zellij liveness table for the reconcile gate, filled by the reconcile
+   * tmux liveness table for the reconcile gate, filled by the reconcile
    * precheck only. Reconcile gates intents one at a time with awaits in
    * between, so the sweep must never write to it.
+   */
+  private tmuxActivity = new Map<string, number>();
+  /** Sweep-side tmux activity, refreshed every sweep for the keep-alive window. */
+  private sweepTmuxActivity = new Map<string, number>();
+  /**
+   * zellij liveness table for the reconcile gate, filled by the reconcile
+   * precheck only, for the same reason as `tmuxActivity`.
    */
   private zellijSessions = new Map<string, ZellijSessionInfo>();
   /**
@@ -177,18 +183,18 @@ export class TuiAgentsRuntime {
       sweepIntervalMs: deps.lifecycle?.sweepIntervalMs,
       beforeSweep: async () => {
         if ((this.deps.platform ?? process.platform) === 'win32') {
-          this.tmuxActivity = new Map();
+          this.sweepTmuxActivity = new Map();
           return;
         }
         // Skip the multiplexer subprocesses entirely when nothing is tracked;
         // the sweep below iterates the same (empty) config set.
         if (this.configs.size === 0) {
-          this.tmuxActivity = new Map();
+          this.sweepTmuxActivity = new Map();
           this.detachedZellijSessions = new Map();
           return;
         }
         try {
-          this.tmuxActivity = this.hasTmuxConfigs()
+          this.sweepTmuxActivity = this.hasTmuxConfigs()
             ? await listTmuxSessionActivity(this.deps.exec)
             : new Map();
         } finally {
@@ -899,7 +905,7 @@ export class TuiAgentsRuntime {
     const state = peek(this.sessionsList.states.list)[conversationId];
     const now = this.clock.now();
     const tmuxLastOutputAt = config.input.tmuxSessionName
-      ? this.tmuxActivity.get(config.input.tmuxSessionName)
+      ? this.sweepTmuxActivity.get(config.input.tmuxSessionName)
       : undefined;
     const lastOutputAt = maxNullable(activity.lastOutputAt, tmuxLastOutputAt);
     // Interactive busy window, plus tmux-side liveness: recent output inside the
