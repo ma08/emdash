@@ -476,7 +476,7 @@ export class TerminalsRuntime {
         status: session.exited ? 'exited' : 'running',
         startCount: this.startCounts.get(key) ?? existing?.startCount ?? 1,
         tmux: this.interactiveConfigs.get(key)?.spec.tmux,
-        zellij: this.interactiveConfigs.get(key)?.spec.zellijSessionName ? true : undefined,
+        zellij: isZellijSpec(this.interactiveConfigs.get(key)?.spec) ? true : undefined,
         pid: session.getPid(),
         cols: session.spec.cols,
         rows: session.spec.rows,
@@ -604,6 +604,11 @@ export class TerminalsRuntime {
 
 function scopeKeyFor(workspace: HostFileRef): string {
   return resourceKeyFromFileRef(workspace);
+}
+
+/** tmux wins when a spec carries both, mirroring the spawn intent. */
+function isZellijSpec(spec: StartTerminalSpec | undefined): boolean {
+  return Boolean(spec && !spec.tmux && spec.zellijSessionName);
 }
 
 function sessionKeyFor(key: TerminalKey): string {

@@ -21,6 +21,8 @@ export const ZELLIJ_SESSION_NAME_MAX_LENGTH = 22;
 const DEFAULT_ZELLIJ_LABEL = 'session';
 const MAX_ZELLIJ_LABEL_LENGTH = 10;
 const ZELLIJ_SESSION_HASH_LENGTH = 8;
+/** Matches `TMUX_HISTORY_LIMIT`; zellij's default is 10 000 lines. */
+const ZELLIJ_SCROLL_BUFFER_SIZE = 100_000;
 const SESSION_HASH_RE = /^[A-Za-z0-9_-]+$/;
 const SESSION_LABEL_RE = /^[a-z0-9-]+$/;
 
@@ -194,7 +196,7 @@ export function buildZellijAttachScript(
     '}',
     'create_or_attach_session() {',
     '  delete_remnants',
-    '  if zellij attach --create "$session" options --default-layout "$layout_file" --on-force-close detach; then',
+    `  if zellij attach --create "$session" options --default-layout "$layout_file" --scroll-buffer-size ${ZELLIJ_SCROLL_BUFFER_SIZE} --on-force-close detach; then`,
     '    return 0',
     '  else',
     '    create_status=$?',

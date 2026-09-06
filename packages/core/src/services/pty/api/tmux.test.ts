@@ -57,6 +57,14 @@ describe('listTmuxSessionActivity', () => {
     await expect(listTmuxSessionActivity(stubExecContext(exec))).resolves.toEqual(new Map());
   });
 
+  it('returns an empty map when BoundExec reports the missing binary as a null exit', async () => {
+    const exec = vi.fn(async () => {
+      throw { exitCode: null, stderr: 'spawn tmux ENOENT' };
+    });
+
+    await expect(listTmuxSessionActivity(stubExecContext(exec))).resolves.toEqual(new Map());
+  });
+
   it('returns an empty map when tmux is not installed (spawn failure)', async () => {
     const exec = vi.fn(async () => {
       throw Object.assign(new Error('spawn tmux ENOENT'), { code: 'ENOENT' });

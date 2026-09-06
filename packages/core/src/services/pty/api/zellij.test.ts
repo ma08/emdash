@@ -92,7 +92,7 @@ describe('buildZellijShellLine', () => {
     expect(line).toContain('exit 127');
     expect(line).toContain(sessionName);
     expect(line).toContain(
-      'zellij attach --create "$session" options --default-layout "$layout_file" --on-force-close detach'
+      'zellij attach --create "$session" options --default-layout "$layout_file" --scroll-buffer-size 100000 --on-force-close detach'
     );
     expect(line).toContain('zellij delete-session "$remnant"');
     expect(line).toContain('zellij attach "$1" options --on-force-close detach');
@@ -127,6 +127,12 @@ describe('buildZellijShellLine', () => {
     const literal = buildZellijAttachScript(sessionName, 'echo \\u001b', '/work/tree');
     expect(literal).toContain('echo \\\\u001b');
     expect(literal).not.toContain('\\u{');
+  });
+
+  it('quotes the other KDL escapes and leaves non-ASCII text alone', () => {
+    const script = buildZellijAttachScript(sessionName, 'a\tb\rc\x7fd é 🚀', '/work/tree');
+
+    expect(script).toContain('a\\tb\\rc\\u{7f}d é 🚀');
   });
 
   it('validates the layout cleanup delay before handing it to sleep', () => {
@@ -211,6 +217,10 @@ describe('listZellijSessions', () => {
   });
 
   it('returns an empty map when zellij is not installed', async () => {
+    const boundExecShape = vi.fn(async () => {
+      throw { exitCode: null, stderr: 'spawn zellij ENOENT' };
+    });
+    await expect(listZellijSessions(stubExecContext(boundExecShape))).resolves.toEqual(new Map());
     const spawnFailure = vi.fn(async () => {
       throw Object.assign(new Error('spawn zellij ENOENT'), { code: 'ENOENT', stderr: '' });
     });

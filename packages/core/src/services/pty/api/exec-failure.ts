@@ -20,8 +20,14 @@ export function readExecFailure(error: unknown): ExecFailure | null {
   return null;
 }
 
-/** The binary is missing from PATH or the shell reported "command not found". */
+/**
+ * The binary is missing from PATH or the shell reported "command not found".
+ * `BoundExec` reports a failed spawn as an `ExecError` with a null exit code
+ * and the Node error message ("spawn tmux ENOENT") as stderr, so that shape
+ * counts too.
+ */
 export function isMissingBinaryFailure(failure: ExecFailure): boolean {
   if (failure.spawnFailed) return true;
+  if (failure.exitCode === null && /\bENOENT\b/.test(failure.stderr)) return true;
   return failure.exitCode === 127 || /command not found|not found/i.test(failure.stderr);
 }

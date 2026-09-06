@@ -807,7 +807,7 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     expect(spawner.specs).toHaveLength(2);
   });
 
-  it('never lists zellij sessions during idle sweeps', async () => {
+  it('does not list zellij during idle sweeps while the PTY client is attached', async () => {
     const clock = createManualClock(1_000_000);
     const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
     const { runtime } = createRuntime({
@@ -823,6 +823,47 @@ describe('TuiAgentsRuntime zellij sessions', () => {
 
     expect(exec).toHaveBeenCalledWith('tmux', expect.anything());
     expect(exec).not.toHaveBeenCalledWith('zellij', expect.anything());
+  });
+
+  it('keeps a detached zellij session alive while zellij still runs it', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
+    const { runtime, spawner } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 1_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    // The attach client goes away (detach key, client crash); the agent keeps running.
+    spawner.processes[0]!.emitExit({ exitCode: 0, signal: null });
+    await clock.advanceBy(2_400);
+
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting']);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', ZELLIJ_SESSION]);
+    expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
+      'conversation-1'
+    );
+  });
+
+  it('evicts a detached zellij session once zellij reports it exited', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = zellijListing([
+      `${ZELLIJ_SESSION} [Created 1m ago] (EXITED - attach to resurrect)`,
+    ]);
+    const { runtime, spawner } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 1_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    spawner.processes[0]!.emitExit({ exitCode: 0, signal: null });
+    await clock.advanceBy(2_400);
+
+    await vi.waitFor(() => {
+      expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toEqual({});
+    });
   });
 
   it('reconciles tmux intents without consulting zellij', async () => {

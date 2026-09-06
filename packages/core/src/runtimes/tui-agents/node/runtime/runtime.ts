@@ -98,12 +98,16 @@ export class TuiAgentsRuntime {
   private readonly lifecycle: ConversationSessionLifecycle;
   private tmuxActivity = new Map<string, number>();
   /**
-   * Reconcile-time zellij liveness table. zellij reports no activity
-   * timestamps, so unlike `tmuxActivity` it plays no part in idle sweeps;
-   * output from an attached zellij session reaches the activity tracker
-   * through the PTY like any other session.
+   * zellij liveness table for the reconcile gate and for idle sweeps. zellij
+   * reports no activity timestamps, so while a PTY client is attached the
+   * activity tracker is the only signal (output flows through the PTY). Once
+   * the client is gone (detach key, client crash) a still-running zellij
+   * session counts as busy so the sweep never force-deletes a working agent;
+   * tmux gets the same protection from its activity timestamps.
    */
   private zellijSessions = new Map<string, ZellijSessionInfo>();
+  /** True when the last sweep-side zellij listing failed: assume detached sessions are alive. */
+  private zellijListingFailed = false;
   private readonly unexpectedRespawns = new Map<string, number>();
   private readonly promptSpills = new Map<string, PromptSpillResult>();
   /**
@@ -173,9 +177,11 @@ export class TuiAgentsRuntime {
         // below iterates the same (empty) config set.
         if (this.configs.size === 0) {
           this.tmuxActivity = new Map();
+          this.zellijSessions = new Map();
           return;
         }
         this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
+        await this.refreshDetachedZellijLiveness();
       },
       entries: () => this.configs.keys(),
       snapshot: (conversationId, activity) => this.lifecycleSnapshot(conversationId, activity),
@@ -265,10 +271,12 @@ export class TuiAgentsRuntime {
             }
             try {
               // The prefetch doubles as the gate's liveness table; a listing
-              // failure vetoes the whole run (intents stay untouched). zellij
-              // is only consulted when an intent needs it, so a zellij-side
-              // failure never blocks tmux users.
-              this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
+              // failure vetoes the whole run (intents stay untouched). Each
+              // multiplexer is consulted only when an active intent needs it,
+              // so a host without one of them never blocks the other.
+              this.tmuxActivity = intents.some(intentUsesTmux)
+                ? await listTmuxSessionActivity(this.deps.exec)
+                : new Map();
               this.zellijSessions = intents.some(intentUsesZellij)
                 ? await listZellijSessions(this.deps.exec)
                 : new Map();
@@ -885,8 +893,45 @@ export class TuiAgentsRuntime {
     // output window would (it previously enriched the policy's lastOutputAt).
     const busy =
       (lastOutputAt !== null && now - lastOutputAt < BUSY_OUTPUT_WINDOW_MS) ||
-      (tmuxLastOutputAt !== undefined && now - tmuxLastOutputAt < this.tmuxKeepAliveMs);
+      (tmuxLastOutputAt !== undefined && now - tmuxLastOutputAt < this.tmuxKeepAliveMs) ||
+      this.detachedZellijSessionAlive(conversationId, config);
     return { running: state?.status === 'running', busy };
+  }
+
+  /**
+   * Lists zellij only when a zellij-backed conversation has lost its PTY client;
+   * attached sessions are judged by PTY activity like everything else.
+   */
+  private async refreshDetachedZellijLiveness(): Promise<void> {
+    const detached = [...this.configs.entries()].some(
+      ([conversationId, config]) =>
+        config.input.zellijSessionName !== undefined &&
+        config.intent !== 'stopped' &&
+        !this.sessions.get(conversationId)?.pty
+    );
+    if (!detached) {
+      this.zellijSessions = new Map();
+      this.zellijListingFailed = false;
+      return;
+    }
+    try {
+      this.zellijSessions = await listZellijSessions(this.deps.exec);
+      this.zellijListingFailed = false;
+    } catch (error) {
+      this.zellijListingFailed = true;
+      this.deps.logger.warn('TuiAgentsRuntime: zellij listing failed; keeping detached sessions', {
+        error: String(error),
+      });
+    }
+  }
+
+  private detachedZellijSessionAlive(conversationId: string, config: TuiSessionConfig): boolean {
+    const sessionName = config.input.zellijSessionName;
+    if (!sessionName || this.sessions.get(conversationId)?.pty) return false;
+    return (
+      this.zellijListingFailed ||
+      activeZellijSessionFor(this.zellijSessions, sessionName) !== undefined
+    );
   }
 
   private setResumeState(
@@ -1054,14 +1099,22 @@ export class TuiAgentsRuntime {
   }
 }
 
-/** Only active intents are resumed, so only they decide whether zellij must be consulted. */
+/** Only active intents are resumed, so only they decide which multiplexers reconcile consults. */
 function intentUsesZellij(intent: SessionIntent): boolean {
+  return activeIntentHasStringField(intent, 'zellijSessionName');
+}
+
+function intentUsesTmux(intent: SessionIntent): boolean {
+  return activeIntentHasStringField(intent, 'tmuxSessionName');
+}
+
+function activeIntentHasStringField(intent: SessionIntent, field: string): boolean {
   if (intent.status !== 'active') return false;
   const payload: unknown = intent.payload;
   return (
     typeof payload === 'object' &&
     payload !== null &&
-    typeof (payload as { zellijSessionName?: unknown }).zellijSessionName === 'string'
+    typeof (payload as Record<string, unknown>)[field] === 'string'
   );
 }
 
