@@ -35,8 +35,8 @@ import {
 import {
   buildTerminalEnv,
   killTmuxSession,
-  killZellijSession,
   killZellijSessionsForPtySessionIds,
+  killZellijSessionsMatching,
   makeTmuxSessionName,
   resolveLocalPtySpawn,
   PtyRegistry,
@@ -292,13 +292,18 @@ export class TerminalsRuntime {
     return ok(undefined);
   }
 
+  /** Best effort like `killTmuxSessions`: a host without zellij, or a failing listing, is not an error. */
   async killZellijSessions(
     input: KillZellijSessionsInput
   ): Promise<Result<void, TerminalRuntimeError>> {
     if (process.platform === 'win32') return ok(undefined);
-    await this.withExecutionContext((exec) =>
-      killZellijSessionsForPtySessionIds(exec, input.ptySessionIds)
-    );
+    try {
+      await this.withExecutionContext((exec) =>
+        killZellijSessionsForPtySessionIds(exec, input.ptySessionIds)
+      );
+    } catch {
+      // Swallowed by design; the desktop deletes tasks regardless of host state.
+    }
     return ok(undefined);
   }
 
@@ -407,7 +412,7 @@ export class TerminalsRuntime {
     }
     const zellijSessionName = config.spec.zellijSessionName;
     if (!zellijSessionName) return;
-    await this.withExecutionContext((exec) => killZellijSession(exec, zellijSessionName));
+    await this.withExecutionContext((exec) => killZellijSessionsMatching(exec, zellijSessionName));
   }
 
   private async shellResolverFor(

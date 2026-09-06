@@ -613,6 +613,11 @@ describe('TerminalsRuntime zellij sessions', () => {
 
   it('spawns interactive terminals inside the named zellij session', async () => {
     const exec = fakeExec();
+    exec.exec.mockImplementation(async (_command: string, args: string[]) =>
+      args[0] === 'list-sessions'
+        ? { stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' }
+        : { stdout: '', stderr: '' }
+    );
     const spawner = new FakePtySpawner();
     const scope = createScope({ label: 'test-terminals-zellij' });
     const runtime = new TerminalsRuntime({
@@ -678,6 +683,24 @@ describe('TerminalsRuntime zellij sessions', () => {
     expect(exec.exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting']);
     expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', wanted]);
     expect(exec.exec).toHaveBeenCalledTimes(2);
+    await scope.dispose();
+  });
+
+  it('killZellijSessions succeeds even when the host cannot list sessions', async () => {
+    const exec = fakeExec();
+    exec.exec.mockRejectedValue({ exitCode: 2, stderr: 'permission denied' });
+    const spawner = new FakePtySpawner();
+    const scope = createScope({ label: 'test-terminals-zellij' });
+    const runtime = new TerminalsRuntime({
+      spawner,
+      userEnv: async () => testUserEnv(),
+      exec,
+      scope,
+    });
+
+    const result = await runtime.killZellijSessions({ ptySessionIds: ['project:task:leaf'] });
+
+    expect(result).toEqual({ success: true, data: undefined });
     await scope.dispose();
   });
 

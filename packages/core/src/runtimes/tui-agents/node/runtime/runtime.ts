@@ -39,8 +39,9 @@ import {
   type ConversationLifecycleReporter,
 } from '#services/conversation-reports/node';
 import {
+  activeZellijSessionFor,
   killTmuxSession,
-  killZellijSession,
+  killZellijSessionsMatching,
   listTmuxSessionActivity,
   listZellijSessions,
   logLocalPtySpawnWarnings,
@@ -52,6 +53,7 @@ import {
   type ZellijSessionInfo,
 } from '#services/pty/api';
 import { resolveTerminalShell } from '#services/pty/node';
+import type { SessionIntent } from '#services/session-intents/api';
 import {
   SESSION_IDLE_MS,
   type ActivityFields,
@@ -96,9 +98,10 @@ export class TuiAgentsRuntime {
   private readonly lifecycle: ConversationSessionLifecycle;
   private tmuxActivity = new Map<string, number>();
   /**
-   * zellij reports liveness but no activity timestamps, so it only feeds the
-   * reconcile gate; output from an attached zellij session reaches the
-   * activity tracker through the PTY like any other session.
+   * Reconcile-time zellij liveness table. zellij reports no activity
+   * timestamps, so unlike `tmuxActivity` it plays no part in idle sweeps;
+   * output from an attached zellij session reaches the activity tracker
+   * through the PTY like any other session.
    */
   private zellijSessions = new Map<string, ZellijSessionInfo>();
   private readonly unexpectedRespawns = new Map<string, number>();
@@ -164,20 +167,15 @@ export class TuiAgentsRuntime {
       beforeSweep: async () => {
         if ((this.deps.platform ?? process.platform) === 'win32') {
           this.tmuxActivity = new Map();
-          this.zellijSessions = new Map();
           return;
         }
         // Skip the tmux subprocess entirely when nothing is tracked; the sweep
         // below iterates the same (empty) config set.
         if (this.configs.size === 0) {
           this.tmuxActivity = new Map();
-          this.zellijSessions = new Map();
           return;
         }
         this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
-        this.zellijSessions = this.hasZellijConfigs()
-          ? await listZellijSessions(this.deps.exec)
-          : new Map();
       },
       entries: () => this.configs.keys(),
       snapshot: (conversationId, activity) => this.lifecycleSnapshot(conversationId, activity),
@@ -259,7 +257,7 @@ export class TuiAgentsRuntime {
           };
         },
         reconcile: {
-          precheck: async () => {
+          precheck: async (intents) => {
             if ((this.deps.platform ?? process.platform) === 'win32') {
               this.tmuxActivity = new Map();
               this.zellijSessions = new Map();
@@ -267,9 +265,13 @@ export class TuiAgentsRuntime {
             }
             try {
               // The prefetch doubles as the gate's liveness table; a listing
-              // failure vetoes the whole run (intents stay untouched).
+              // failure vetoes the whole run (intents stay untouched). zellij
+              // is only consulted when an intent needs it, so a zellij-side
+              // failure never blocks tmux users.
               this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
-              this.zellijSessions = await listZellijSessions(this.deps.exec);
+              this.zellijSessions = intents.some(intentUsesZellij)
+                ? await listZellijSessions(this.deps.exec)
+                : new Map();
               return { ctx: undefined };
             } catch (error) {
               return { veto: true as const, error };
@@ -985,18 +987,15 @@ export class TuiAgentsRuntime {
     return info.exitCode !== 0 || info.signal !== null;
   }
 
-  private hasZellijConfigs(): boolean {
-    for (const config of this.configs.values()) {
-      if (config.input.zellijSessionName) return true;
-    }
-    return false;
-  }
-
-  /** Reconcile liveness: the multiplexer session must exist and, for zellij, be running. */
+  /**
+   * Reconcile liveness: the multiplexer session must exist and, for zellij,
+   * be running. zellij matches by id hash so a session created under an
+   * earlier task label still counts.
+   */
   private multiplexerSessionAlive(input: TuiAgentStartInput): boolean {
     if (input.tmuxSessionName) return this.tmuxActivity.has(input.tmuxSessionName);
     if (input.zellijSessionName) {
-      return this.zellijSessions.get(input.zellijSessionName)?.active === true;
+      return activeZellijSessionFor(this.zellijSessions, input.zellijSessionName) !== undefined;
     }
     return false;
   }
@@ -1015,7 +1014,7 @@ export class TuiAgentsRuntime {
     }
     const zellijSessionName = config?.input.zellijSessionName;
     if (!zellijSessionName) return;
-    await killZellijSession(this.deps.exec, zellijSessionName, (error) => {
+    await killZellijSessionsMatching(this.deps.exec, zellijSessionName, (error) => {
       this.deps.logger.debug('TuiAgentsRuntime: zellij session not found or already stopped', {
         sessionName: zellijSessionName,
         error: String(error),
@@ -1034,6 +1033,15 @@ export class TuiAgentsRuntime {
     } = input;
     return normalized as T;
   }
+}
+
+function intentUsesZellij(intent: SessionIntent): boolean {
+  const payload: unknown = intent.payload;
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    typeof (payload as { zellijSessionName?: unknown }).zellijSessionName === 'string'
+  );
 }
 
 function hasMultiplexerSession(

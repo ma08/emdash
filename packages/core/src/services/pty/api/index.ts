@@ -43,10 +43,13 @@ export {
 export { persistentSessionNames, type PersistentSessionNames } from './multiplexer';
 export { buildTerminalEnv } from './terminal-env';
 export {
+  activeZellijSessionFor,
+  buildZellijAttachScript,
   buildZellijShellLine,
   isZellijSessionForPtySessionId,
   killZellijSession,
   killZellijSessionsForPtySessionIds,
+  killZellijSessionsMatching,
   listZellijSessions,
   makeZellijSessionLabel,
   makeZellijSessionName,

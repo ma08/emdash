@@ -167,7 +167,12 @@ export async function killLifecycleTerminalSessions(
     await projectTerminals.killTmuxSessions({ sessionNames: targets.tmuxSessionNames });
   }
   if (targets.zellijPtySessionIds.length > 0) {
-    await projectTerminals.killZellijSessions({ ptySessionIds: targets.zellijPtySessionIds });
+    try {
+      await projectTerminals.killZellijSessions({ ptySessionIds: targets.zellijPtySessionIds });
+    } catch {
+      // A workspace-server that predates zellij support has no such procedure;
+      // the tmux kill above already ran, so nothing is lost for tmux users.
+    }
   }
 }
 

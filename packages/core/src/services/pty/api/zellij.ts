@@ -73,8 +73,9 @@ export function isZellijSessionForPtySessionId(sessionName: string, sessionId: s
   return parsed !== null && parsed.sessionHash === zellijSessionHash(sessionId);
 }
 
+/** KDL v1 string: JSON escapes are compatible except that unicode escapes are braced. */
 function kdlQuote(value: string): string {
-  return JSON.stringify(value);
+  return JSON.stringify(value).replace(/\\u([0-9a-fA-F]{4})/g, '\\u{$1}');
 }
 
 function posix(value: string): string {
@@ -82,28 +83,32 @@ function posix(value: string): string {
 }
 
 /**
- * POSIX wrapper that attaches the pane command to a persistent zellij session,
- * the zellij counterpart of `buildTmuxShellLine`.
+ * The POSIX attach script for one persistent zellij session, the zellij
+ * counterpart of `buildTmuxShellLine`'s inner script.
  *
- * - An active session is attached as-is so a resumed conversation keeps its
- *   process. `--on-force-close detach` keeps the session alive when the PTY
- *   client goes away.
- * - Otherwise any `(EXITED)` remnant is deleted and a fresh session is created
- *   in the foreground from a temporary KDL layout, so the pane inherits the
- *   real terminal size instead of zellij's detached default. Resurrecting the
- *   remnant would re-run the stale command line; the caller's current command
- *   (with its resume arguments) must win.
+ * - Sessions are matched by the id hash in their name, not the whole name, so
+ *   a session created under an earlier task label is still found after the
+ *   task was renamed. An active match is attached as-is (the resumed
+ *   conversation keeps its process); `--on-force-close detach` keeps it alive
+ *   when the PTY client goes away.
+ * - Otherwise `(EXITED)` remnants for the hash are deleted and a fresh session
+ *   is created in the foreground from a temporary KDL layout, so the pane
+ *   inherits the real terminal size. Resurrecting a remnant would re-run its
+ *   stale command line; the caller's current command (with its resume
+ *   arguments) must win.
  * - The pane runs `<shell> <shellArgs> <commandLine>` directly, no extra
  *   `/bin/sh` hop, so TUI agents can switch the terminal to raw mode.
  * - A missing `zellij` binary fails fast with exit 127 and a clear message.
  */
-export function buildZellijShellLine(
+export function buildZellijAttachScript(
   sessionName: string,
   commandLine: string,
   cwd: string,
   options: ZellijShellOptions = {}
 ): string {
-  const label = parseZellijSessionName(sessionName)?.label ?? DEFAULT_ZELLIJ_LABEL;
+  const parsed = parseZellijSessionName(sessionName);
+  const label = parsed?.label ?? DEFAULT_ZELLIJ_LABEL;
+  const sessionHash = parsed?.sessionHash ?? '';
   const shell = options.shell?.trim() || '/bin/sh';
   const shellArgs = options.shellArgs?.length ? [...options.shellArgs] : ['-c'];
   const layout = [
@@ -117,17 +122,19 @@ export function buildZellijShellLine(
     '',
   ].join('\n');
 
-  const script = [
+  return [
     'set -eu',
     'if ! command -v zellij >/dev/null 2>&1; then',
     '  echo "Emdash: zellij is not installed or not on PATH" >&2',
     '  exit 127',
     'fi',
     `session=${posix(sessionName)}`,
+    `session_hash=${posix(sessionHash)}`,
     'tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/emdash-zellij.XXXXXX")',
     'layout_file="$tmpdir/layout.kdl"',
     'cleanup() {',
     '  delay="${EMDASH_ZELLIJ_LAYOUT_CLEANUP_DELAY_SECONDS:-30}"',
+    '  case "$delay" in \'\' | *[!0-9]*) delay=30 ;; esac',
     '  if [ "$delay" = "0" ]; then',
     '    rm -rf "$tmpdir"',
     '  else',
@@ -144,31 +151,46 @@ export function buildZellijShellLine(
     `layout=${posix(layout)}`,
     `printf '%s' "$layout" > "$layout_file"`,
     '# Emdash zellij session names are whitespace-free; no-formatting keeps the EXITED marker parseable.',
-    'active_session_exists() {',
-    `  zellij list-sessions --no-formatting 2>/dev/null | awk -v session="$session" '`,
-    '    $1 == session && index($0, "(EXITED") == 0 { found = 1 }',
-    '    END { exit found ? 0 : 1 }',
+    '# Sessions are matched by the id hash so a rename between launches still finds the live session.',
+    'list_sessions() {',
+    '  zellij list-sessions --no-formatting 2>/dev/null || true',
+    '}',
+    'active_session_named() {',
+    `  list_sessions | awk -v hash="$session_hash" '`,
+    '    index($0, "(EXITED") == 0 && $1 ~ ("^emdash-[a-z0-9-]+[.]" hash "$") { print $1; exit }',
     "  '",
     '}',
+    'delete_remnants() {',
+    `  list_sessions | awk -v hash="$session_hash" '`,
+    '    index($0, "(EXITED") > 0 && $1 ~ ("^emdash-[a-z0-9-]+[.]" hash "$") { print $1 }',
+    "  ' | while IFS= read -r remnant; do",
+    '    zellij delete-session "$remnant" >/dev/null 2>&1 || true',
+    '  done',
+    '}',
+    'attach_session() {',
+    '  zellij attach "$1" options --on-force-close detach',
+    '}',
     'create_or_attach_session() {',
-    '  zellij delete-session "$session" >/dev/null 2>&1 || true',
+    '  delete_remnants',
     '  if zellij attach --create "$session" options --default-layout "$layout_file" --on-force-close detach; then',
     '    return 0',
     '  else',
     '    create_status=$?',
     '  fi',
-    '  if active_session_exists; then',
-    '    zellij attach "$session" options --on-force-close detach',
+    '  existing=$(active_session_named)',
+    '  if [ -n "$existing" ]; then',
+    '    attach_session "$existing"',
     '  else',
     '    exit "$create_status"',
     '  fi',
     '}',
-    'if active_session_exists; then',
-    '  if zellij attach "$session" options --on-force-close detach; then',
+    'existing=$(active_session_named)',
+    'if [ -n "$existing" ]; then',
+    '  if attach_session "$existing"; then',
     '    :',
     '  else',
     '    attach_status=$?',
-    '    if active_session_exists; then',
+    '    if [ -n "$(active_session_named)" ]; then',
     '      exit "$attach_status"',
     '    fi',
     '    create_or_attach_session',
@@ -177,8 +199,16 @@ export function buildZellijShellLine(
     '  create_or_attach_session',
     'fi',
   ].join('\n');
+}
 
-  return `/bin/sh -c ${posix(script)}`;
+/** `/bin/sh -c '<attach script>'`, ready to be the last argument of a shell `-c` invocation. */
+export function buildZellijShellLine(
+  sessionName: string,
+  commandLine: string,
+  cwd: string,
+  options: ZellijShellOptions = {}
+): string {
+  return `/bin/sh -c ${posix(buildZellijAttachScript(sessionName, commandLine, cwd, options))}`;
 }
 
 /**
@@ -210,7 +240,29 @@ export function parseZellijSessionList(output: string): Map<string, ZellijSessio
   return sessions;
 }
 
-/** Kills the session if it is running and deletes its resurrection data. */
+/**
+ * The listed session that belongs to the same PTY session as `sessionName`
+ * and is running, if any. Matching goes through the id hash so a session
+ * created under an earlier task label still counts.
+ */
+export function activeZellijSessionFor(
+  sessions: ReadonlyMap<string, ZellijSessionInfo>,
+  sessionName: string
+): string | undefined {
+  const wanted = parseZellijSessionName(sessionName)?.sessionHash;
+  if (!wanted) return undefined;
+  for (const [name, info] of sessions) {
+    if (info.active && parseZellijSessionName(name)?.sessionHash === wanted) return name;
+  }
+  return undefined;
+}
+
+/**
+ * Kills the session if it is running and deletes its resurrection data.
+ * zellij reports "not found" on stderr for a session that is already gone,
+ * and 0.44 does so even after force-deleting a running one, so that outcome
+ * counts as success.
+ */
 export async function killZellijSession(
   ctx: IExecutionContext,
   sessionName: string,
@@ -219,14 +271,33 @@ export async function killZellijSession(
   try {
     await ctx.exec('zellij', ['delete-session', '--force', sessionName]);
   } catch (error) {
+    if (/not found/i.test(readExecFailure(error)?.stderr ?? '')) return;
     onError?.(error);
   }
 }
 
 /**
+ * Kills every listed session (running or exited) that shares `sessionName`'s
+ * id hash, which covers sessions created under an earlier task label.
+ * Best effort: a listing failure is reported through `onError`, never thrown.
+ */
+export async function killZellijSessionsMatching(
+  ctx: IExecutionContext,
+  sessionName: string,
+  onError?: (error: unknown) => void
+): Promise<void> {
+  const wanted = parseZellijSessionName(sessionName)?.sessionHash;
+  if (!wanted) {
+    await killZellijSession(ctx, sessionName, onError);
+    return;
+  }
+  await killZellijSessionsForHashes(ctx, new Set([wanted]), onError);
+}
+
+/**
  * Kills every Emdash zellij session belonging to one of `sessionIds`. Zellij
  * session names carry a label the caller may not know, so matching goes
- * through the embedded PTY session id hash.
+ * through the embedded PTY session id hash. Best effort like the tmux kill.
  */
 export async function killZellijSessionsForPtySessionIds(
   ctx: IExecutionContext,
@@ -234,8 +305,21 @@ export async function killZellijSessionsForPtySessionIds(
   onError?: (error: unknown) => void
 ): Promise<void> {
   if (sessionIds.length === 0) return;
-  const hashes = new Set(sessionIds.map(zellijSessionHash));
-  const sessions = await listZellijSessions(ctx);
+  await killZellijSessionsForHashes(ctx, new Set(sessionIds.map(zellijSessionHash)), onError);
+}
+
+async function killZellijSessionsForHashes(
+  ctx: IExecutionContext,
+  hashes: ReadonlySet<string>,
+  onError?: (error: unknown) => void
+): Promise<void> {
+  let sessions: Map<string, ZellijSessionInfo>;
+  try {
+    sessions = await listZellijSessions(ctx);
+  } catch (error) {
+    onError?.(error);
+    return;
+  }
   const matches = [...sessions.keys()].filter((name) => {
     const parsed = parseZellijSessionName(name);
     return parsed !== null && hashes.has(parsed.sessionHash);

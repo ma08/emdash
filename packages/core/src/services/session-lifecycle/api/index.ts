@@ -63,8 +63,13 @@ export interface SessionSnapshotJudgment {
 }
 
 export interface ReconcileOptions<TResume, TCtx> {
-  /** Run-vetoing pre-scan; a veto (or throw) aborts the whole reconcile. */
-  precheck?: () => Promise<{ ctx: TCtx } | { veto: true; error?: unknown }>;
+  /**
+   * Run-vetoing pre-scan over the listed active intents; a veto (or throw)
+   * aborts the whole reconcile.
+   */
+  precheck?: (
+    intents: readonly SessionIntent[]
+  ) => Promise<{ ctx: TCtx } | { veto: true; error?: unknown }>;
   parse: (intent: SessionIntent, ctx: TCtx) => { input: TResume } | { suspend: string };
   gate?: (input: TResume) => { ok: true } | { suspend: string };
   resume: (input: TResume) => Promise<Result<unknown, unknown>>;

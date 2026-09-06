@@ -363,7 +363,7 @@ export function createSessionLifecycle<TResume, TCtx>(
     if (reconcileOptions.precheck) {
       let prechecked;
       try {
-        prechecked = await reconcileOptions.precheck();
+        prechecked = await reconcileOptions.precheck(listed.data);
       } catch (error) {
         logger.warn(`${name}: reconcile precheck failed`, { error: String(error) });
         return;

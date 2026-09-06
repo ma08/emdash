@@ -138,7 +138,16 @@ async function cleanupDetachedSessions(
     await runtime.data.terminals.killTmuxSessions({
       sessionNames: ptySessionIds.map(makeTmuxSessionName),
     });
-    await runtime.data.terminals.killZellijSessions({ ptySessionIds });
+    try {
+      await runtime.data.terminals.killZellijSessions({ ptySessionIds });
+    } catch (error) {
+      // A workspace-server that predates zellij support has no such procedure.
+      log.debug('cleanupDetachedSessions: zellij cleanup unavailable on host', {
+        projectId,
+        taskId,
+        error: String(error),
+      });
+    }
   }
 }
 

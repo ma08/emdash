@@ -1,10 +1,15 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import type { IExecutionContext } from '#primitives/exec/api';
 import {
+  activeZellijSessionFor,
+  buildZellijAttachScript,
   buildZellijShellLine,
   isZellijSessionForPtySessionId,
   killZellijSession,
   killZellijSessionsForPtySessionIds,
+  killZellijSessionsMatching,
   listZellijSessions,
   makeZellijSessionLabel,
   makeZellijSessionName,
@@ -84,11 +89,41 @@ describe('buildZellijShellLine', () => {
     expect(line).toContain(
       'zellij attach --create "$session" options --default-layout "$layout_file" --on-force-close detach'
     );
-    expect(line).toContain('zellij delete-session "$session"');
-    expect(line).toContain('zellij attach "$session" options --on-force-close detach');
+    expect(line).toContain('zellij delete-session "$remnant"');
+    expect(line).toContain('zellij attach "$1" options --on-force-close detach');
     expect(line).toContain('index($0, "(EXITED") == 0');
     expect(line).not.toContain('--create-background');
     expect(line).not.toContain('<<');
+  });
+
+  it('matches live sessions by the id hash so a renamed task still attaches', () => {
+    const script = buildZellijAttachScript(sessionName, 'codex', '/work/tree');
+
+    expect(script).toContain(`session_hash=${zellijSessionHash(SESSION_ID)}`);
+    expect(script).toContain('$1 ~ ("^emdash-[a-z0-9-]+[.]" hash "$")');
+    expect(script).toContain('existing=$(active_session_named)');
+    expect(script).toContain('delete_remnants');
+  });
+
+  it('emits a script /bin/sh can parse', async () => {
+    const script = buildZellijAttachScript(sessionName, `echo "it's" && codex`, "/work/it's here", {
+      shell: '/bin/zsh',
+    });
+
+    await expect(promisify(execFile)('sh', ['-n', '-c', script])).resolves.toBeDefined();
+  });
+
+  it('writes control characters in the KDL layout as braced unicode escapes', () => {
+    const script = buildZellijAttachScript(sessionName, 'printf "\u001b[0m"', '/work/tree');
+
+    expect(script).toContain('\\u{001b}');
+    expect(script).not.toContain('\\u001b');
+  });
+
+  it('validates the layout cleanup delay before handing it to sleep', () => {
+    const script = buildZellijAttachScript(sessionName, 'codex', '/work/tree');
+
+    expect(script).toContain('case "$delay" in \'\' | *[!0-9]*) delay=30 ;; esac');
   });
 
   it('writes a single-tab layout that runs the command through the default shell', () => {
@@ -191,9 +226,9 @@ describe('listZellijSessions', () => {
 });
 
 describe('killZellijSession', () => {
-  it('force-deletes the session and reports failures through onError', async () => {
+  it('force-deletes the session and treats "not found" as success', async () => {
     const exec = vi.fn(async () => {
-      throw { exitCode: 1, stderr: 'Session not found' };
+      throw { exitCode: 2, stderr: 'Session "emdash-my-task.abcdefghij" not found' };
     });
     const onError = vi.fn();
 
@@ -204,7 +239,74 @@ describe('killZellijSession', () => {
       '--force',
       'emdash-my-task.abcdefghij',
     ]);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('reports other failures through onError', async () => {
+    const exec = vi.fn(async () => {
+      throw { exitCode: 2, stderr: 'permission denied' };
+    });
+    const onError = vi.fn();
+
+    await killZellijSession(stubExecContext(exec), 'emdash-my-task.abcdefghij', onError);
+
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('activeZellijSessionFor', () => {
+  it('finds a running session for the same PTY session under any label', () => {
+    const requested = makeZellijSessionName(SESSION_ID, 'new-name');
+    const created = makeZellijSessionName(SESSION_ID, 'old-name');
+    const sessions = new Map([
+      [created, { active: true }],
+      [makeZellijSessionName('project-1:task-1:other', 'new-name'), { active: true }],
+    ]);
+
+    expect(activeZellijSessionFor(sessions, requested)).toBe(created);
+    expect(
+      activeZellijSessionFor(new Map([[created, { active: false }]]), requested)
+    ).toBeUndefined();
+    expect(activeZellijSessionFor(sessions, 'not-an-emdash-name')).toBeUndefined();
+  });
+});
+
+describe('killZellijSessionsMatching', () => {
+  it('deletes running and exited sessions that share the id hash, under any label', async () => {
+    const requested = makeZellijSessionName(SESSION_ID, 'new-name');
+    const stale = makeZellijSessionName(SESSION_ID, 'old-name');
+    const other = makeZellijSessionName('project-1:task-1:other', 'other');
+    const exec = vi.fn(async (_command: string, args: string[]) =>
+      args[0] === 'list-sessions'
+        ? {
+            stdout: `${stale} [Created 1m ago] (EXITED - attach to resurrect)\n${requested} [Created 1m ago]\n${other} [Created 1m ago]\n`,
+            stderr: '',
+          }
+        : { stdout: '', stderr: '' }
+    );
+
+    await killZellijSessionsMatching(stubExecContext(exec), requested);
+
+    expect(exec).toHaveBeenCalledTimes(3);
+    expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', stale]);
+    expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', requested]);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', other]);
+  });
+
+  it('reports a listing failure through onError instead of throwing', async () => {
+    const exec = vi.fn(async () => {
+      throw { exitCode: 2, stderr: 'permission denied' };
+    });
+    const onError = vi.fn();
+
+    await killZellijSessionsMatching(
+      stubExecContext(exec),
+      makeZellijSessionName(SESSION_ID, 'x'),
+      onError
+    );
+    await killZellijSessionsForPtySessionIds(stubExecContext(exec), [SESSION_ID], onError);
+
+    expect(onError).toHaveBeenCalledTimes(2);
   });
 });
 
