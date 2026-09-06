@@ -775,6 +775,25 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     expect(spawner.specs).toHaveLength(2);
   });
 
+  it('lets a start queued ahead of a stop keep the session it creates', async () => {
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    // The restart is queued on the launch mutex before the stop arrives, so it
+    // runs first; the stop's kill must then stand down instead of deleting
+    // the session the restart just created.
+    const restart = runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    const stopped = runtime.stopSession('conversation-1');
+
+    await expect(restart).resolves.toEqual(ok({ outcome: 'started' }));
+    await stopped;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', ZELLIJ_SESSION]);
+    expect(spawner.specs).toHaveLength(2);
+  });
+
   it("makes a restart wait for a deleted session's zellij cleanup", async () => {
     let releaseListing: (() => void) | undefined;
     const events: string[] = [];
