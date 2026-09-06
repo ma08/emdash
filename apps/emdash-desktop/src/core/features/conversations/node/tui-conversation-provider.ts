@@ -1,7 +1,7 @@
 import type { GitCredentialsSessionSpec } from '@emdash/core/primitives/git-credentials/api';
 import type { HostRef } from '@emdash/core/primitives/host/api';
 import type { TuiAgentStartInput } from '@emdash/core/runtimes/tui-agents/api';
-import { makeTmuxSessionName } from '@emdash/core/services/pty/api';
+import { persistentSessionNames } from '@emdash/core/services/pty/api';
 import { and, eq } from 'drizzle-orm';
 import { conversationRegistryTable as conversations } from '@core/features/conversations/api/node/registry';
 import type {
@@ -153,6 +153,12 @@ export class TuiConversationProvider implements ConversationProvider {
       ...launchContext.data.env,
     };
     const sessionId = makePtySessionId(this.projectId, this.taskId, conversation.id);
+    const sessionNames = persistentSessionNames({
+      enabled: launchContext.data.tmux,
+      multiplexer: launchContext.data.multiplexer,
+      sessionId,
+      label: launchContext.data.taskName,
+    });
 
     return {
       conversationId: conversation.id,
@@ -172,7 +178,8 @@ export class TuiConversationProvider implements ConversationProvider {
       cols: initialSize.cols,
       rows: initialSize.rows,
       shellSetup: launchContext.data.shellSetup,
-      tmuxSessionName: launchContext.data.tmux ? makeTmuxSessionName(sessionId) : undefined,
+      tmuxSessionName: sessionNames.tmuxSessionName,
+      zellijSessionName: sessionNames.zellijSessionName,
     };
   }
 }

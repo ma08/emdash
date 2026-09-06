@@ -25,6 +25,8 @@ describe('buildTaskProviders', () => {
               path: '/remote/worktree',
             },
             tmux: false,
+            multiplexer: 'tmux' as const,
+            taskName: 'Task',
             env: {},
           }),
       },

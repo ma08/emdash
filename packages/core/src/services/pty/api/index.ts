@@ -40,6 +40,7 @@ export {
   parseTmuxSessionActivity,
   TMUX_SESSION_PREFIX,
 } from './tmux';
+export { persistentSessionNames, type PersistentSessionNames } from './multiplexer';
 export { buildTerminalEnv } from './terminal-env';
 export {
   buildZellijShellLine,

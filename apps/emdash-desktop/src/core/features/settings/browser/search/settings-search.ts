@@ -77,11 +77,18 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     description: 'Add the selected issue to the initial agent prompt.',
   },
   {
-    id: 'enable-tmux',
-    label: 'Enable tmux',
+    id: 'enable-persistent-sessions',
+    label: 'Enable persistent sessions',
     tab: 'general',
-    description: 'Run agent sessions and terminals in tmux sessions by default.',
-    keywords: ['multiplexer'],
+    description: 'Run agent sessions and terminals in tmux or zellij sessions by default.',
+    keywords: ['multiplexer', 'tmux', 'zellij'],
+  },
+  {
+    id: 'session-multiplexer',
+    label: 'Session multiplexer',
+    tab: 'general',
+    description: 'Choose tmux or zellij for persistent sessions on this machine.',
+    keywords: ['tmux', 'zellij'],
   },
   {
     id: 'notifications',

@@ -18,6 +18,8 @@ export type TaskSessionTargets = {
   tuiConversationIds: string[];
   terminalSessionIds: string[];
   tmuxSessionNames: string[];
+  /** PTY session ids whose zellij sessions (if any) should be deleted on the host. */
+  zellijPtySessionIds: string[];
 };
 
 export type TaskSessionScope = {
@@ -65,7 +67,8 @@ export async function killTaskSessions(
     if (
       targets.tuiConversationIds.length > 0 ||
       targets.terminalSessionIds.length > 0 ||
-      targets.tmuxSessionNames.length > 0
+      targets.tmuxSessionNames.length > 0 ||
+      targets.zellijPtySessionIds.length > 0
     ) {
       await sessionCleanup.killTerminals(db, scope, context, targets);
     }

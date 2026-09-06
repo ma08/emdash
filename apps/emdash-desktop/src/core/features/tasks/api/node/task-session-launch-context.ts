@@ -1,3 +1,4 @@
+import type { SessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import type { RuntimeBroker } from '@emdash/core/services/runtime-broker/api';
 import { err, ok, type Result } from '@emdash/shared';
 import { and, eq, isNull } from 'drizzle-orm';
@@ -14,7 +15,11 @@ import { tasks } from '@core/services/app-db/node/schema';
 
 export type TaskSessionLaunchContext = Readonly<{
   workspace: WorkspaceIdentity;
+  /** Persistent sessions on for this launch; `multiplexer` says which kind. */
   tmux: boolean;
+  multiplexer: SessionMultiplexer;
+  /** Human-readable task name, the label persistent zellij sessions carry. */
+  taskName: string;
   shellSetup?: string;
   env: Readonly<Record<string, string>>;
 }>;
@@ -92,12 +97,13 @@ export class TaskSessionLaunchContextResolver {
     const runtime = await this.dependencies.runtimes.client(identity.host);
     if (!runtime.success) return runtime;
 
-    const [effective, tmux, projectConfig] = await Promise.all([
+    const [effective, tmux, multiplexer, projectConfig] = await Promise.all([
       resolveProjectEffectiveSettings({
         settings: project.data.settings,
         repoFacts: project.data.repoFacts,
       }),
       project.data.settings.resolveTmux(),
+      project.data.settings.resolveMultiplexer(),
       runtime.data.workspaceRegistry.getProjectConfig({ workspaceId: identity.workspaceId }),
     ]);
     if (!projectConfig.success) {
@@ -110,6 +116,8 @@ export class TaskSessionLaunchContextResolver {
     return ok({
       workspace: identity,
       tmux: resolveSessionTmux(identity.host, tmux.value),
+      multiplexer: multiplexer.value,
+      taskName: task.name,
       shellSetup: projectConfig.data.resolved.shellSetup?.value,
       env: {
         ...projectConfig.data.resolved.env.value,

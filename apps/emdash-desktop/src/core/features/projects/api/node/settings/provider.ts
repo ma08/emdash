@@ -1,3 +1,4 @@
+import type { SessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import type { Result } from '@emdash/shared';
 import type {
   PlacementContext,
@@ -29,6 +30,8 @@ export interface ProjectSettingsProvider {
   getStoredPlacementSettings(): Promise<StoredPlacementSettings>;
   /** Effective tmux value from the shared project > host > app resolver. */
   resolveTmux(): Promise<Resolved<boolean>>;
+  /** Effective multiplexer behind persistent sessions, from the host > app resolver. */
+  resolveMultiplexer(): Promise<Resolved<SessionMultiplexer>>;
   patch(
     patch: Pick<ProjectSettingsDomainPatch, 'gitIdentity' | 'placement'>
   ): Promise<Result<void, UpdateProjectSettingsError>>;

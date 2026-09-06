@@ -127,6 +127,7 @@ describe('deleteProject', () => {
         tuiConversationIds: [] as string[],
         terminalSessionIds: [] as string[],
         tmuxSessionNames: [] as string[],
+        zellijPtySessionIds: [] as string[],
       })),
       killAcp: vi.fn(async () => {}),
       killTerminals: vi.fn(async () => {}),

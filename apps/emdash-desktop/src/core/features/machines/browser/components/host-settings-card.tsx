@@ -1,6 +1,15 @@
 import { normalizeExclusionPatterns } from '@emdash/core/primitives/exclusion-policy/api';
+import { isSessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import { SettingsCard } from '@emdash/ui/react/patterns';
-import { Field, Input, Separator, Switch, Textarea, toast } from '@emdash/ui/react/primitives';
+import {
+  Field,
+  Input,
+  Select,
+  Separator,
+  Switch,
+  Textarea,
+  toast,
+} from '@emdash/ui/react/primitives';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { detectPlatformContext } from '@core/primitives/keybindings/api';
@@ -8,7 +17,8 @@ import { getMachinesStore } from '../../contributions/app-stores';
 import { useHostSettings } from '../use-host-settings';
 
 /**
- * Per-host defaults (host-settings runtime): shellSetup, worktree root, tmux, and
+ * Per-host defaults (host-settings runtime): shellSetup, worktree root, persistent
+ * sessions (tmux or zellij), and
  * watcher exclusions, plus the desktop-side "Sync local settings" toggle for
  * remote machines. Text fields commit on blur; switches commit immediately.
  * External edits to the host's settings file stream in through the live model
@@ -144,10 +154,10 @@ export const HostSettingsCard = observer(function HostSettingsCard({
 
         <Field.Root orientation="horizontal">
           <div className="flex flex-1 flex-col gap-1">
-            <Field.Label>Enable tmux by default</Field.Label>
+            <Field.Label>Enable persistent sessions by default</Field.Label>
             <Field.Description className="text-foreground-muted">
-              Default tmux preference for sessions on this host. Project settings can override it
-              per project.
+              Run sessions on this host inside tmux or zellij so they survive app restarts. Project
+              settings can override it per project.
             </Field.Description>
           </div>
           <Switch
@@ -157,9 +167,36 @@ export const HostSettingsCard = observer(function HostSettingsCard({
           />
           {!tmuxSupported ? (
             <div className="text-sm text-foreground-muted">
-              tmux is unavailable for Windows sessions. Your stored preference is preserved.
+              Persistent sessions are unavailable for Windows sessions. Your stored preference is
+              preserved.
             </div>
           ) : null}
+        </Field.Root>
+
+        <Field.Root orientation="horizontal">
+          <div className="flex flex-1 flex-col gap-1">
+            <Field.Label>Session multiplexer</Field.Label>
+            <Field.Description className="text-foreground-muted">
+              tmux or zellij for persistent sessions on this host. Unset inherits the app setting.
+              The chosen multiplexer must be installed on this host.
+            </Field.Description>
+          </div>
+          <Select.Root
+            value={settings?.multiplexer ?? 'inherit'}
+            disabled={disabled || !tmuxSupported}
+            onValueChange={(next) =>
+              void commit({ multiplexer: isSessionMultiplexer(next) ? next : null })
+            }
+          >
+            <Select.Trigger className="w-auto shrink-0 gap-2 [&>span]:line-clamp-none">
+              <Select.Value />
+            </Select.Trigger>
+            <Select.Content className="min-w-max">
+              <Select.Item value="inherit">Inherit app setting</Select.Item>
+              <Select.Item value="tmux">tmux</Select.Item>
+              <Select.Item value="zellij">zellij</Select.Item>
+            </Select.Content>
+          </Select.Root>
         </Field.Root>
 
         {machineId ? (

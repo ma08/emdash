@@ -15,6 +15,7 @@ describe('TaskSessionLaunchContextResolver', () => {
   it('reads mutable launch policy from its authorities on every resolution', async () => {
     let taskName = 'Old task';
     let tmux = false;
+    let multiplexer: 'tmux' | 'zellij' = 'tmux';
     let shellSetup = 'source old-profile';
     let defaultBranch = 'main';
     let projectEnv = {
@@ -47,6 +48,10 @@ describe('TaskSessionLaunchContextResolver', () => {
       resolveTmux: vi.fn(async () => ({
         value: tmux,
         provenance: { kind: 'set' as const },
+      })),
+      resolveMultiplexer: vi.fn(async () => ({
+        value: multiplexer,
+        provenance: { kind: 'inferred' as const, from: 'host default' },
       })),
       getStoredGitSettings: vi.fn(async () => ({
         defaultBranch: { remote: null, branch: defaultBranch },
@@ -88,6 +93,7 @@ describe('TaskSessionLaunchContextResolver', () => {
 
     taskName = 'New task';
     tmux = true;
+    multiplexer = 'zellij';
     shellSetup = 'source new-profile';
     defaultBranch = 'trunk';
     projectEnv = {
@@ -100,6 +106,8 @@ describe('TaskSessionLaunchContextResolver', () => {
       success: true,
       data: {
         tmux: false,
+        multiplexer: 'tmux',
+        taskName: 'Old task',
         shellSetup: 'source old-profile',
         env: {
           CLAUDE_CONFIG_DIR: '/tmp/claude-old',
@@ -112,6 +120,8 @@ describe('TaskSessionLaunchContextResolver', () => {
       success: true,
       data: {
         tmux: true,
+        multiplexer: 'zellij',
+        taskName: 'New task',
         shellSetup: 'source new-profile',
         env: {
           CLAUDE_CONFIG_DIR: '/tmp/claude-new',
@@ -123,6 +133,7 @@ describe('TaskSessionLaunchContextResolver', () => {
     expect(select).toHaveBeenCalledTimes(2);
     expect(getProjectConfig).toHaveBeenCalledTimes(2);
     expect(settings.resolveTmux).toHaveBeenCalledTimes(2);
+    expect(settings.resolveMultiplexer).toHaveBeenCalledTimes(2);
   });
 
   it('does not let a task-bound source silently follow a replacement workspace', async () => {
