@@ -187,3 +187,85 @@ describe('resolveLocalPtySpawn', () => {
     }
   });
 });
+
+describe('resolveLocalPtySpawn with a zellij session', () => {
+  const env = { SHELL: '/bin/zsh' } as NodeJS.ProcessEnv;
+
+  it('wraps interactive shells in the zellij attach script', () => {
+    const resolved = resolveLocalPtySpawn({
+      intent: {
+        kind: 'interactive-shell',
+        cwd: '/work/tree',
+        zellijSessionName: 'emdash-my-task.abcdefghij',
+      },
+      platform: 'darwin',
+      env,
+    });
+
+    expect(resolved.warnings).toEqual([]);
+    expect(resolved.invocation.kind).toBe('argv');
+    if (resolved.invocation.kind !== 'argv') throw new Error('expected argv invocation');
+    expect(resolved.invocation.executable).toBe('/bin/zsh');
+    expect(resolved.invocation.argv[0]).toBe('-c');
+    const script = resolved.invocation.argv[1] ?? '';
+    expect(script.startsWith('/bin/sh -c ')).toBe(true);
+    expect(script).toContain('zellij attach --create');
+    expect(script).toContain('emdash-my-task.abcdefghij');
+    expect(script).toContain('pane command="/bin/zsh" cwd="/work/tree"');
+    expect(script).toContain('args "-c" "exec /bin/zsh -il"');
+  });
+
+  it('wraps commands in the zellij attach script and keeps shell setup', () => {
+    const resolved = resolveLocalPtySpawn({
+      intent: {
+        kind: 'run-command',
+        cwd: '/work/tree',
+        command: { kind: 'argv', command: 'codex', args: ['--resume', 'abc'] },
+        shellSetup: 'source ~/.nvm/nvm.sh',
+        zellijSessionName: 'emdash-my-task.abcdefghij',
+      },
+      platform: 'linux',
+      env,
+    });
+
+    if (resolved.invocation.kind !== 'argv') throw new Error('expected argv invocation');
+    expect(resolved.invocation.executable).toBe('/bin/zsh');
+    const script = resolved.invocation.argv[1] ?? '';
+    expect(script).toContain('zellij attach --create');
+    expect(script).toContain('args "-c" "source ~/.nvm/nvm.sh && codex --resume abc"');
+    expect(script).not.toContain('tmux');
+  });
+
+  it('prefers tmux when both multiplexer names are present', () => {
+    const resolved = resolveLocalPtySpawn({
+      intent: {
+        kind: 'run-command',
+        cwd: '/work/tree',
+        command: { kind: 'argv', command: 'codex', args: [] },
+        tmuxSessionName: 'emdash-tmux',
+        zellijSessionName: 'emdash-my-task.abcdefghij',
+      },
+      platform: 'linux',
+      env,
+    });
+
+    if (resolved.invocation.kind !== 'argv') throw new Error('expected argv invocation');
+    expect(resolved.invocation.argv[1]).toContain('tmux');
+    expect(resolved.invocation.argv[1]).not.toContain('zellij');
+  });
+
+  it('warns and skips the multiplexer on Windows', () => {
+    const resolved = resolveLocalPtySpawn({
+      intent: {
+        kind: 'interactive-shell',
+        cwd: 'C:\\work',
+        zellijSessionName: 'emdash-my-task.abcdefghij',
+      },
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' } as NodeJS.ProcessEnv,
+    });
+
+    expect(resolved.warnings).toEqual(['zellij_unsupported_on_windows']);
+    expect(JSON.stringify(resolved.invocation)).not.toContain('zellij');
+  });
+});

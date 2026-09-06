@@ -41,4 +41,20 @@ export {
   TMUX_SESSION_PREFIX,
 } from './tmux';
 export { buildTerminalEnv } from './terminal-env';
+export {
+  buildZellijShellLine,
+  isZellijSessionForPtySessionId,
+  killZellijSession,
+  killZellijSessionsForPtySessionIds,
+  listZellijSessions,
+  makeZellijSessionLabel,
+  makeZellijSessionName,
+  parseZellijSessionList,
+  parseZellijSessionName,
+  ZELLIJ_SESSION_PREFIX,
+  zellijSessionHash,
+  type ZellijSessionInfo,
+  type ZellijSessionNameParts,
+  type ZellijShellOptions,
+} from './zellij';
 export type { PtyDimensions, PtyExitInfo, PtyProcess, PtySpawner, PtySpawnSpec } from './types';
