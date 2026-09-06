@@ -204,7 +204,9 @@ describe('listZellijSessions', () => {
 
     const sessions = await listZellijSessions(stubExecContext(exec));
 
-    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting']);
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
     expect(sessions).toEqual(new Map([['em-my-task.abcdefgh', { active: true }]]));
   });
 

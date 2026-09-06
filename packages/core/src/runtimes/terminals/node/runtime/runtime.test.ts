@@ -680,7 +680,9 @@ describe('TerminalsRuntime zellij sessions', () => {
     const result = await runtime.killZellijSessions({ ptySessionIds: [sessionId] });
 
     expect(result).toEqual({ success: true, data: undefined });
-    expect(exec.exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting']);
+    expect(exec.exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
     expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', wanted]);
     expect(exec.exec).toHaveBeenCalledTimes(2);
     await scope.dispose();

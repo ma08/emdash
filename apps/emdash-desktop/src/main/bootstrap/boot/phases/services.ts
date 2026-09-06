@@ -1,4 +1,9 @@
-import { isLocalHostRef, LOCAL_HOST_REF, type HostRef } from '@emdash/core/primitives/host/api';
+import {
+  isLocalHostRef,
+  LOCAL_HOST_REF,
+  type HostRef,
+  sshConnectionIdOf,
+} from '@emdash/core/primitives/host/api';
 import { integrationPluginRegistry } from '@emdash/plugins/integrations';
 import { err, ok } from '@emdash/shared';
 import { runWithTimeout } from '@emdash/shared/scheduling';
@@ -317,6 +322,20 @@ export async function bootServices(
     projects: projectManager,
     runtimes,
     workspaceIdentity,
+    hostProtocol: {
+      agreedMinor: async (host) => {
+        const connectionId = sshConnectionIdOf(host);
+        if (!connectionId) return null;
+        try {
+          return (
+            (await infrastructure.hosts.client(connectionId)).currentHandshake()?.agreedMinor ??
+            null
+          );
+        } catch {
+          return null;
+        }
+      },
+    },
   });
   const previewServerAccess = new PreviewServerAccessService({
     projects: projectManager,

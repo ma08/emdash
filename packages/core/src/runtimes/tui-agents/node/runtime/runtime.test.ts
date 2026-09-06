@@ -821,7 +821,6 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
     await clock.advanceBy(1_200);
 
-    expect(exec).toHaveBeenCalledWith('tmux', expect.anything());
     expect(exec).not.toHaveBeenCalledWith('zellij', expect.anything());
   });
 
@@ -839,11 +838,59 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     spawner.processes[0]!.emitExit({ exitCode: 0, signal: null });
     await clock.advanceBy(2_400);
 
-    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting']);
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
     expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', ZELLIJ_SESSION]);
     expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
       'conversation-1'
     );
+  });
+
+  it('keeps a detached zellij session alive even when the tmux listing fails', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = vi.fn((command: string, args: string[]) => {
+      if (command === 'tmux') return Promise.reject({ exitCode: 1, stderr: 'permission denied' });
+      if (args[0] === 'list-sessions') {
+        return Promise.resolve({ stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' });
+      }
+      return Promise.resolve({ stdout: '', stderr: '' });
+    });
+    const { runtime, spawner } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 1_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ tmuxSessionName: 'emdash-test' }));
+    await runtime.startSession(
+      startInput({ conversationId: 'conversation-2', zellijSessionName: ZELLIJ_SESSION })
+    );
+    spawner.processes[1]!.emitExit({ exitCode: 0, signal: null });
+    await clock.advanceBy(2_400);
+
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', ZELLIJ_SESSION]);
+    expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
+      'conversation-2'
+    );
+  });
+
+  it('skips the tmux listing during sweeps when no tracked session uses tmux', async () => {
+    const clock = createManualClock(1_000_000);
+    const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
+    const { runtime } = createRuntime({
+      clock,
+      lifecycle: { session: { kind: 'idle-after', outputMs: 60_000 }, sweepIntervalMs: 1_100 },
+      exec: { exec },
+    });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await clock.advanceBy(1_200);
+
+    expect(exec).not.toHaveBeenCalledWith('tmux', expect.anything());
   });
 
   it('evicts a detached zellij session once zellij reports it exited', async () => {
@@ -938,7 +985,9 @@ describe('TuiAgentsRuntime zellij sessions', () => {
 
     await runtime.reconcile();
 
-    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting']);
+    expect(exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: 10_000,
+    });
     expect(spawner.specs).toHaveLength(1);
     expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
       'conversation-1'

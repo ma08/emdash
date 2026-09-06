@@ -98,14 +98,21 @@ export class TuiAgentsRuntime {
   private readonly lifecycle: ConversationSessionLifecycle;
   private tmuxActivity = new Map<string, number>();
   /**
-   * zellij liveness table for the reconcile gate and for idle sweeps. zellij
-   * reports no activity timestamps, so while a PTY client is attached the
+   * zellij liveness table for the reconcile gate, filled by the reconcile
+   * precheck only. Reconcile gates intents one at a time with awaits in
+   * between, so the sweep must never write to it.
+   */
+  private zellijSessions = new Map<string, ZellijSessionInfo>();
+  /**
+   * Sweep-side zellij liveness for conversations whose PTY client is gone.
+   * zellij reports no activity timestamps, so while a client is attached the
    * activity tracker is the only signal (output flows through the PTY). Once
    * the client is gone (detach key, client crash) a still-running zellij
    * session counts as busy so the sweep never force-deletes a working agent;
-   * tmux gets the same protection from its activity timestamps.
+   * tmux gets the same protection from its activity timestamps. The cost is
+   * that an idle detached zellij session is only reclaimed by stop or delete.
    */
-  private zellijSessions = new Map<string, ZellijSessionInfo>();
+  private detachedZellijSessions = new Map<string, ZellijSessionInfo>();
   /** True when the last sweep-side zellij listing failed: assume detached sessions are alive. */
   private zellijListingFailed = false;
   private readonly unexpectedRespawns = new Map<string, number>();
@@ -173,15 +180,22 @@ export class TuiAgentsRuntime {
           this.tmuxActivity = new Map();
           return;
         }
-        // Skip the tmux subprocess entirely when nothing is tracked; the sweep
-        // below iterates the same (empty) config set.
+        // Skip the multiplexer subprocesses entirely when nothing is tracked;
+        // the sweep below iterates the same (empty) config set.
         if (this.configs.size === 0) {
           this.tmuxActivity = new Map();
-          this.zellijSessions = new Map();
+          this.detachedZellijSessions = new Map();
           return;
         }
-        this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
-        await this.refreshDetachedZellijLiveness();
+        try {
+          this.tmuxActivity = this.hasTmuxConfigs()
+            ? await listTmuxSessionActivity(this.deps.exec)
+            : new Map();
+        } finally {
+          // A tmux failure must not leave zellij liveness stale, or a
+          // detached zellij agent could be judged idle and killed.
+          await this.refreshDetachedZellijLiveness();
+        }
       },
       entries: () => this.configs.keys(),
       snapshot: (conversationId, activity) => this.lifecycleSnapshot(conversationId, activity),
@@ -898,6 +912,13 @@ export class TuiAgentsRuntime {
     return { running: state?.status === 'running', busy };
   }
 
+  private hasTmuxConfigs(): boolean {
+    for (const config of this.configs.values()) {
+      if (config.input.tmuxSessionName) return true;
+    }
+    return false;
+  }
+
   /**
    * Lists zellij only when a zellij-backed conversation has lost its PTY client;
    * attached sessions are judged by PTY activity like everything else.
@@ -910,12 +931,12 @@ export class TuiAgentsRuntime {
         !this.sessions.get(conversationId)?.pty
     );
     if (!detached) {
-      this.zellijSessions = new Map();
+      this.detachedZellijSessions = new Map();
       this.zellijListingFailed = false;
       return;
     }
     try {
-      this.zellijSessions = await listZellijSessions(this.deps.exec);
+      this.detachedZellijSessions = await listZellijSessions(this.deps.exec);
       this.zellijListingFailed = false;
     } catch (error) {
       this.zellijListingFailed = true;
@@ -930,7 +951,7 @@ export class TuiAgentsRuntime {
     if (!sessionName || this.sessions.get(conversationId)?.pty) return false;
     return (
       this.zellijListingFailed ||
-      activeZellijSessionFor(this.zellijSessions, sessionName) !== undefined
+      activeZellijSessionFor(this.detachedZellijSessions, sessionName) !== undefined
     );
   }
 

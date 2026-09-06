@@ -23,6 +23,8 @@ const MAX_ZELLIJ_LABEL_LENGTH = 10;
 const ZELLIJ_SESSION_HASH_LENGTH = 8;
 /** Matches `TMUX_HISTORY_LIMIT`; zellij's default is 10 000 lines. */
 const ZELLIJ_SCROLL_BUFFER_SIZE = 100_000;
+/** `list-sessions` probes every session socket; a wedged session must not stall sweeps. */
+const ZELLIJ_LIST_TIMEOUT_MS = 10_000;
 const SESSION_HASH_RE = /^[A-Za-z0-9_-]+$/;
 const SESSION_LABEL_RE = /^[a-z0-9-]+$/;
 
@@ -244,7 +246,9 @@ export async function listZellijSessions(
   ctx: IExecutionContext
 ): Promise<Map<string, ZellijSessionInfo>> {
   try {
-    const result = await ctx.exec('zellij', ['list-sessions', '--no-formatting']);
+    const result = await ctx.exec('zellij', ['list-sessions', '--no-formatting'], {
+      timeout: ZELLIJ_LIST_TIMEOUT_MS,
+    });
     return parseZellijSessionList(result.stdout);
   } catch (error) {
     if (isExpectedZellijListFailure(error)) return new Map();

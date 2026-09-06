@@ -136,6 +136,86 @@ describe('TaskSessionLaunchContextResolver', () => {
     expect(settings.resolveMultiplexer).toHaveBeenCalledTimes(2);
   });
 
+  it('falls back to tmux on a remote host whose workspace-server predates zellij', async () => {
+    const remote = { type: 'remote', id: 'ssh-1' } as const;
+    const agreedMinor = vi.fn(async () => 0);
+    const resolver = new TaskSessionLaunchContextResolver({
+      db: {
+        select: vi.fn(() =>
+          selecting({
+            id: 'task-1',
+            projectId: 'project-1',
+            workspaceId: 'workspace-1',
+            name: 'Task',
+          })
+        ),
+      } as never,
+      projects: {
+        requireAttached: vi.fn(() =>
+          ok({
+            settings: {
+              resolveTmux: vi.fn(async () => ({
+                value: true,
+                provenance: { kind: 'set' as const },
+              })),
+              resolveMultiplexer: vi.fn(async () => ({
+                value: 'zellij' as const,
+                provenance: { kind: 'inferred' as const, from: 'host default' },
+              })),
+              getStoredGitSettings: vi.fn(async () => ({
+                defaultBranch: { remote: null, branch: 'main' },
+              })),
+              getPlacementContext: vi.fn(async () => ({
+                hostWorktreeRoot: null,
+                builtInWorktreeRoot: '/tmp/worktrees',
+                homeDirectory: '/tmp',
+                hostTmux: null,
+                appDefaultTmux: false,
+              })),
+            },
+            repoFacts: { get: vi.fn(async () => ({ remotes: [], localBranches: ['main'] })) },
+            repoPath: '/repo',
+          } as never)
+        ),
+      },
+      runtimes: {
+        client: vi.fn(async () =>
+          ok({
+            workspaceRegistry: {
+              getProjectConfig: vi.fn(async () =>
+                ok({
+                  resolved: {
+                    shellSetup: undefined,
+                    env: { value: {}, from: 'personal' as const },
+                  },
+                })
+              ),
+            },
+          } as never)
+        ),
+      },
+      workspaceIdentity: {
+        resolve: vi.fn(async () => ({
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          host: remote,
+          path: '/remote/worktree',
+        })),
+      },
+      hostProtocol: { agreedMinor },
+    });
+
+    const context = await resolver.resolve({ projectId: 'project-1', taskId: 'task-1' });
+
+    expect(context).toMatchObject({ success: true, data: { tmux: true, multiplexer: 'tmux' } });
+    expect(agreedMinor).toHaveBeenCalledWith(remote);
+
+    agreedMinor.mockResolvedValue(1);
+    await expect(
+      resolver.resolve({ projectId: 'project-1', taskId: 'task-1' })
+    ).resolves.toMatchObject({ success: true, data: { multiplexer: 'zellij' } });
+  });
+
   it('does not let a task-bound source silently follow a replacement workspace', async () => {
     const requireAttached = vi.fn();
     const resolver = new TaskSessionLaunchContextResolver({
