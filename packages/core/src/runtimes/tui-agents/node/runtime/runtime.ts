@@ -374,7 +374,10 @@ export class TuiAgentsRuntime {
     const config = this.configs.get(conversationId);
     if (config) this.configs.set(conversationId, { ...config, intent: 'stopped' });
     this.unexpectedRespawns.delete(conversationId);
-    void this.killMultiplexerForConfig(config);
+    // Not awaited, but serialized with launches: the zellij kill lists and
+    // deletes by id hash, so a restart must not create its session before
+    // the stale cleanup has finished looking.
+    void this.launchMutex.runExclusive(conversationId, () => this.killMultiplexerForConfig(config));
     this.registry.dispose(conversationId);
     const active = this.sessions.get(conversationId);
     if (active) active.pty = null;

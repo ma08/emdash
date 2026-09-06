@@ -745,6 +745,36 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     expect(exec).not.toHaveBeenCalledWith('tmux', expect.anything());
   });
 
+  it("makes a restart wait for the stopped session's zellij cleanup", async () => {
+    let releaseListing: (() => void) | undefined;
+    const events: string[] = [];
+    const exec = vi.fn((command: string, args: string[]) => {
+      if (command !== 'zellij') return Promise.resolve({ stdout: '', stderr: '' });
+      if (args[0] === 'list-sessions') {
+        events.push('list');
+        return new Promise<{ stdout: string; stderr: string }>((resolve) => {
+          releaseListing = () =>
+            resolve({ stdout: `${ZELLIJ_SESSION} [Created 1m ago]\n`, stderr: '' });
+        });
+      }
+      events.push(`delete:${args[2]}`);
+      return Promise.resolve({ stdout: '', stderr: '' });
+    });
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await runtime.stopSession('conversation-1');
+    const restart = runtime.startSession(startInput({ zellijSessionName: ZELLIJ_SESSION }));
+    await vi.waitFor(() => expect(events).toEqual(['list']));
+    expect(spawner.specs).toHaveLength(1);
+
+    releaseListing?.();
+    await expect(restart).resolves.toEqual(ok({ outcome: 'started' }));
+
+    expect(events).toEqual(['list', `delete:${ZELLIJ_SESSION}`]);
+    expect(spawner.specs).toHaveLength(2);
+  });
+
   it('never lists zellij sessions during idle sweeps', async () => {
     const clock = createManualClock(1_000_000);
     const exec = zellijListing([`${ZELLIJ_SESSION} [Created 1m ago]`]);
