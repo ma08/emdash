@@ -120,7 +120,7 @@ describe('buildZellijShellLine', () => {
     await expect(promisify(execFile)('sh', ['-n', '-c', script])).resolves.toBeDefined();
   });
 
-  it('emits a line csh can parse when it is the outer shell', async () => {
+  it('escapes history expansion when csh is the outer shell', () => {
     const line = buildZellijShellLine(sessionName, `echo "it's" && codex`, "/work/it's here", {
       shell: '/bin/tcsh',
       shellArgs: ['-c'],
@@ -129,9 +129,17 @@ describe('buildZellijShellLine', () => {
 
     expect(line).not.toContain('\n');
     expect(line).toContain('\\!');
-    const tcsh = ['/bin/tcsh', '/usr/bin/tcsh', '/bin/csh'].find((path) => existsSync(path));
-    if (!tcsh) return;
-    await expect(promisify(execFile)(tcsh, ['-n', '-c', line])).resolves.toBeDefined();
+  });
+
+  const tcsh = ['/bin/tcsh', '/usr/bin/tcsh', '/bin/csh'].find((path) => existsSync(path));
+  it.skipIf(!tcsh)('emits a line a real csh can parse', async () => {
+    const line = buildZellijShellLine(sessionName, `echo "it's" && codex`, "/work/it's here", {
+      shell: '/bin/tcsh',
+      shellArgs: ['-c'],
+      outerShellFamily: 'csh',
+    });
+
+    await expect(promisify(execFile)(tcsh!, ['-n', '-c', line])).resolves.toBeDefined();
   });
 
   it('aborts instead of resurrecting a stale remnant that could not be deleted', () => {
