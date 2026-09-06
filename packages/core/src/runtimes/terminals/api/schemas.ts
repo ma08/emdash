@@ -84,6 +84,11 @@ export const startTerminalSpecSchema = z
     shellSetup: z.string().optional(),
     tmux: z.boolean().optional(),
     /**
+     * Persistent zellij session name, computed desktop-side like the tui
+     * runtime's `tmuxSessionName`. Mutually exclusive with `tmux`.
+     */
+    zellijSessionName: z.string().optional(),
+    /**
      * Per-session git credential behavior, resolved desktop-side from project
      * settings (spec: github-git-settings §4). Absent = native behavior.
      */
@@ -105,6 +110,7 @@ export const terminalSessionStateSchema = z.object({
   status: z.enum(['running', 'exited']),
   startCount: z.number().int().nonnegative(),
   tmux: z.boolean().optional(),
+  zellij: z.boolean().optional(),
   pid: z.number().int().positive().optional(),
   cols: z.number().int().positive(),
   rows: z.number().int().positive(),
@@ -141,3 +147,14 @@ export const killTmuxSessionsInputSchema = z.object({
 });
 
 export type KillTmuxSessionsInput = z.infer<typeof killTmuxSessionsInputSchema>;
+
+/**
+ * zellij session names carry a label the desktop may no longer know, so
+ * cleanup matches sessions on the host by the PTY session id hash embedded in
+ * the name (see `killZellijSessionsForPtySessionIds`).
+ */
+export const killZellijSessionsInputSchema = z.object({
+  ptySessionIds: z.array(z.string().min(1)),
+});
+
+export type KillZellijSessionsInput = z.infer<typeof killZellijSessionsInputSchema>;
