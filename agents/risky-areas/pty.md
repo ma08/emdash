@@ -14,7 +14,9 @@
 - PTY cleanup and exit handling
 - resize behavior
 - shell quoting and Windows command wrapping
-- tmux lifecycle
+- tmux and zellij lifecycle: `services/pty/api/tmux.ts` and `zellij.ts` build the attach shell lines,
+  the runtimes kill the session in their `multiplexer-session` evict step, and the TUI reconcile
+  gate treats a zellij `(EXITED)` remnant as process-lost so the current command line recreates it
 - provider-specific resume/session behavior
 - env passthrough safety
 
