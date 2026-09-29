@@ -7,6 +7,7 @@ import {
   CreateBranchAndWorktreeRow,
   DeleteBranchByDefaultRow,
   EnableTmuxRow,
+  SessionMultiplexerRow,
   IncludeIssueContextByDefaultRow,
   PreserveTaskNameCapitalizationRow,
 } from '../components/TaskSettingsRows';
@@ -40,6 +41,7 @@ export function GeneralSettingsPage() {
         <PreserveTaskNameCapitalizationRow />
         <IncludeIssueContextByDefaultRow />
         <EnableTmuxRow />
+        <SessionMultiplexerRow />
       </SettingsSection>
     </div>
   );

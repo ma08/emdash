@@ -37,7 +37,7 @@ export type SessionCleanupDependencies = {
   getAcpRuntimeClient(): Promise<AcpRuntimeClient>;
   getProjectTerminals(
     projectId: string
-  ): Pick<TerminalsRuntimeClient, 'killTmuxSessions'> | undefined;
+  ): Pick<TerminalsRuntimeClient, 'killTmuxSessions' | 'killZellijSessions'> | undefined;
   getTerminalsRuntimeClient(): Promise<TerminalsRuntimeClient>;
   getTuiAgentsRuntimeClient(): Promise<TuiAgentsRuntimeClient>;
 };
@@ -162,6 +162,16 @@ export async function killLifecycleTerminalSessions(
     sessionIdentities: targets.tmuxSessionIdentities,
     workspaceLabel: context.workspacePath ? workspaceLabel(context.workspacePath) : undefined,
   });
+  try {
+    // Session identities are multiplexer-neutral, and the multiplexer setting
+    // may have changed since a session was created, so both kinds are cleaned up.
+    await projectTerminals.killZellijSessions({
+      sessionIdentities: targets.tmuxSessionIdentities,
+    });
+  } catch {
+    // A workspace-server that predates zellij support has no such procedure;
+    // the tmux kill above already ran, so nothing is lost for tmux users.
+  }
 }
 
 function workspaceLabel(path: string): string {

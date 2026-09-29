@@ -1,3 +1,4 @@
+import type { SessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import type { WorktreeRootContext } from './worktree-root';
 
 /**
@@ -10,4 +11,11 @@ export type PlacementContext = WorktreeRootContext & {
   hostTmux: boolean | null;
   /** Desktop-wide fallback used when the host has no tmux default. */
   appDefaultTmux: boolean;
+  /**
+   * Per-host multiplexer behind persistent sessions; null (or absent, for
+   * contexts built before zellij support) means the host has no override.
+   */
+  hostMultiplexer?: SessionMultiplexer | null;
+  /** Desktop-wide multiplexer fallback; absent means tmux. */
+  appDefaultMultiplexer?: SessionMultiplexer;
 };

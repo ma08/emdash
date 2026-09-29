@@ -10,9 +10,11 @@ export type SessionMultiplexer = (typeof SESSION_MULTIPLEXERS)[number];
 export const DEFAULT_SESSION_MULTIPLEXER: SessionMultiplexer = 'tmux';
 
 /**
- * Workspace-server protocol minor that introduced zellij support (the `zellij`
- * start fields and `killZellijSessions`). Clients gate zellij launches on
- * `agreedMinor >= ZELLIJ_PROTOCOL_MINOR` for remote hosts.
+ * Workspace-server protocol minor, within major 11, that introduced zellij
+ * support (the `zellij` start fields and `killZellijSessions`). Clients gate
+ * zellij launches on `agreedMinor >= ZELLIJ_PROTOCOL_MINOR` for remote hosts.
+ * The next protocol major includes the feature unconditionally, so the gate
+ * is removed when the major is bumped.
  */
 export const ZELLIJ_PROTOCOL_MINOR = 1;
 

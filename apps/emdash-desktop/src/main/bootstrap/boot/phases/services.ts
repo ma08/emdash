@@ -289,9 +289,10 @@ export async function bootServices(
     ensureAbsoluteDir: (client, rootPath, absolutePath, options) =>
       ensureAbsoluteDir(async () => client, rootPath, absolutePath, options),
     runtimes,
-    getProjectDefaults: async () => ({
-      tmuxByDefault: (await appSettingsService.get('project')).tmuxByDefault,
-    }),
+    getProjectDefaults: async () => {
+      const project = await appSettingsService.get('project');
+      return { tmuxByDefault: project.tmuxByDefault, multiplexer: project.multiplexer };
+    },
     migrateAppWorktreeRoot: async () => {
       const local = await runtimes.client(LOCAL_HOST_REF);
       if (!local.success) throw new Error('local host runtime unavailable');
@@ -330,6 +331,19 @@ export async function bootServices(
     projects: projectManager,
     runtimes,
     workspaceIdentity,
+    hostProtocol: {
+      agreedMinor: async (host) => {
+        if (isLocalHostRef(host)) return null;
+        try {
+          const connection = await infrastructure.hosts
+            .get(host)
+            ?.runtime.client({ waitForReady: false });
+          return connection?.currentHandshake()?.agreedMinor ?? null;
+        } catch {
+          return null;
+        }
+      },
+    },
   });
   const previewServerAccess = new PreviewServerAccessService({
     projects: projectManager,

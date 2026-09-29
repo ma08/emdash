@@ -69,6 +69,7 @@ it.each(['claude', 'codex'] as const)(
             appDefaultTmux: false,
           }),
           resolveTmux: async () => ({ value: false, provenance: { kind: 'default' } }),
+          resolveMultiplexer: async () => ({ value: 'tmux', provenance: { kind: 'default' } }),
         },
         repoFacts: { get: async () => ({ remotes: [], localBranches: [] }) },
       };

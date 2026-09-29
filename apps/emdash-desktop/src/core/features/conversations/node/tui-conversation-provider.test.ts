@@ -156,6 +156,7 @@ describe('TuiConversationProvider', () => {
         path: '/workspace',
       },
       tmux: false,
+      multiplexer: 'tmux' as const,
       shellSetup: 'source old-profile',
       env: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-old',
@@ -207,6 +208,60 @@ describe('TuiConversationProvider', () => {
       })
     );
   });
+
+  it('starts the session in zellij when the launch context selects it', async () => {
+    const resolve = vi.fn(async () =>
+      ok({
+        workspace: {
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          host: { type: 'local', id: 'local' } as const,
+          path: '/workspace',
+        },
+        tmux: true,
+        multiplexer: 'zellij' as const,
+        env: {},
+      })
+    );
+    const provider = createProvider({ launchContextSource: { resolve } });
+    start.mockClear();
+
+    await provider.ensureSession({
+      conversation: conversation({ id: 'conversation-1', providerId: 'claude' }),
+      mode: 'start',
+    });
+
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ zellij: { identity: 'project-1:task-1:conversation-1' } })
+    );
+    expect(start.mock.calls.at(-1)?.[0]).not.toHaveProperty('tmux');
+  });
+
+  it('ignores the multiplexer while persistent sessions are off', async () => {
+    const resolve = vi.fn(async () =>
+      ok({
+        workspace: {
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          host: { type: 'local', id: 'local' } as const,
+          path: '/workspace',
+        },
+        tmux: false,
+        multiplexer: 'zellij' as const,
+        env: {},
+      })
+    );
+    const provider = createProvider({ launchContextSource: { resolve } });
+    start.mockClear();
+
+    await provider.ensureSession({
+      conversation: conversation({ id: 'conversation-1', providerId: 'claude' }),
+      mode: 'start',
+    });
+
+    expect(start.mock.calls.at(-1)?.[0]).not.toHaveProperty('tmux');
+    expect(start.mock.calls.at(-1)?.[0]).not.toHaveProperty('zellij');
+  });
 });
 
 function createProvider(
@@ -234,6 +289,7 @@ function createProvider(
               path: '/workspace',
             },
             tmux: false,
+            multiplexer: 'tmux' as const,
             env: {},
           }),
       },
