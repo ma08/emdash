@@ -1,3 +1,4 @@
+import type { SessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import type { TerminalShellId } from '@emdash/core/primitives/terminal-shell/api';
 import type { BrowserProfile, BrowserProfileSelection } from '@core/primitives/browser/api';
 import type { OpenInAppId } from '@core/primitives/open-in-apps/api/open-in-apps';
@@ -11,7 +12,9 @@ export type ProjectSettings = {
   pushOnCreate: boolean;
   branchPrefix: string;
   appendRandomBranchSuffix: boolean;
+  /** Persistent sessions on by default; the multiplexer below chooses tmux or zellij. */
   tmuxByDefault: boolean;
+  multiplexer: SessionMultiplexer;
 };
 
 export type NotificationSettings = {

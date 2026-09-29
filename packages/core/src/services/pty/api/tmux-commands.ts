@@ -92,7 +92,7 @@ function isExpectedTmuxListFailure(error: unknown): boolean {
 }
 
 /** Normalize the two execution-error shapes currently exposed by IExecutionContext. */
-function readExecFailure(
+export function readExecFailure(
   error: unknown
 ): { exitCode: number | null; stderr: string; executableMissing: boolean } | null {
   if (typeof error !== 'object' || error === null) return null;

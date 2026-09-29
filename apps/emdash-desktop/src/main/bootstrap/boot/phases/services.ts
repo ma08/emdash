@@ -99,6 +99,7 @@ import { startPeriodicSweep } from '@core/primitives/periodic-sweep/node/periodi
 import { DEFAULT_AGENT_GIT_CREDENTIALS } from '@core/primitives/project-settings/api';
 import type { HostReachabilityProbe } from '@core/primitives/ssh/api';
 import { AppDbKeyValueStore } from '@core/services/app-db/node/key-value-store';
+import { readAgreedProtocolMinor } from '@core/services/hosts/node/agreed-protocol-minor';
 import { createNotificationService } from '@core/services/notifications/node';
 import { LegacyAccountImports } from '@core/services/provider-accounts/node/migrations/legacy-account-imports';
 import { listProviderAccountSummaries } from '@core/services/provider-accounts/node/provider-account-service';
@@ -289,9 +290,10 @@ export async function bootServices(
     ensureAbsoluteDir: (client, rootPath, absolutePath, options) =>
       ensureAbsoluteDir(async () => client, rootPath, absolutePath, options),
     runtimes,
-    getProjectDefaults: async () => ({
-      tmuxByDefault: (await appSettingsService.get('project')).tmuxByDefault,
-    }),
+    getProjectDefaults: async () => {
+      const project = await appSettingsService.get('project');
+      return { tmuxByDefault: project.tmuxByDefault, multiplexer: project.multiplexer };
+    },
     migrateAppWorktreeRoot: async () => {
       const local = await runtimes.client(LOCAL_HOST_REF);
       if (!local.success) throw new Error('local host runtime unavailable');
@@ -330,6 +332,9 @@ export async function bootServices(
     projects: projectManager,
     runtimes,
     workspaceIdentity,
+    hostProtocol: {
+      agreedMinor: (host) => readAgreedProtocolMinor(infrastructure.hosts, host),
+    },
   });
   const previewServerAccess = new PreviewServerAccessService({
     projects: projectManager,

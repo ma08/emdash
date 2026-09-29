@@ -1,4 +1,5 @@
 import { createPathProfile } from '@emdash/core/primitives/path/api';
+import type { SessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import type { FsError } from '@emdash/core/runtimes/files/api';
 import {
   isRuntimeResolveError,
@@ -80,6 +81,7 @@ export type CreateProjectProviderDependencies = {
   runtimes: Pick<RuntimeBroker, 'client'>;
   getProjectDefaults(): Promise<{
     tmuxByDefault: boolean;
+    multiplexer: SessionMultiplexer;
   }>;
   taskSessions: Pick<TaskSessionManager, 'teardownAllForProject'>;
   /**
@@ -174,6 +176,8 @@ export async function createProvider(
             pathProfile,
             hostTmux: hostDefaults.tmux ?? null,
             appDefaultTmux: appDefaults.tmuxByDefault,
+            hostMultiplexer: hostDefaults.multiplexer ?? null,
+            appDefaultMultiplexer: appDefaults.multiplexer,
           };
         },
         worktreeDirectoryFileSystem: {

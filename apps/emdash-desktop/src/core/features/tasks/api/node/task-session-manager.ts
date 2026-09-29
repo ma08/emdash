@@ -146,6 +146,21 @@ async function cleanupDetachedSessions(
       sessionIdentities,
       workspaceLabel: runtimeWorkspace.path.segments.at(-1) ?? 'workspace',
     });
+    try {
+      // The multiplexer setting may have changed since these sessions were
+      // created, so both kinds are cleaned up.
+      await runtime.data.terminals.killZellijSessions({
+        sessionIdentities,
+        workspace: runtimeWorkspace,
+      });
+    } catch (error) {
+      // A workspace-server that predates zellij support has no such procedure.
+      log.debug('cleanupDetachedSessions: zellij cleanup unavailable on host', {
+        projectId,
+        taskId,
+        error: String(error),
+      });
+    }
   }
 }
 

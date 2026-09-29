@@ -92,7 +92,10 @@ function setup() {
     createGitRepository,
     createGitRepositoryFetch: vi.fn(() => fetch),
     ensureAbsoluteDir: vi.fn(async () => ok<void>()),
-    getProjectDefaults: vi.fn(async () => ({ tmuxByDefault: false })),
+    getProjectDefaults: vi.fn(async () => ({
+      tmuxByDefault: false,
+      multiplexer: 'tmux' as const,
+    })),
     taskSessions: { teardownAllForProject },
   } satisfies CreateProjectProviderDependencies;
   const adapter = {

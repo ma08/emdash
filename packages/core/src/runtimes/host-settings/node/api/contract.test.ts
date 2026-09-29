@@ -4,7 +4,7 @@ import path from 'node:path';
 import { remote, snapshot } from '@emdash/wire/state';
 import { createTestWire, type TestWire } from '@emdash/wire/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { hostSettingsContract } from '#runtimes/host-settings/api';
+import { hostSettingsContract, parseHostSettings } from '#runtimes/host-settings/api';
 import { HostSettingsRuntime } from '#runtimes/host-settings/node/runtime';
 import { createHostSettingsController } from './controller';
 
@@ -164,5 +164,33 @@ describe('host settings contract', () => {
       success: true,
       data: { settings: { tmux: true }, parseError: false },
     });
+  });
+
+  it('stores the session multiplexer and clears it back to inherit with null', async () => {
+    const chosen = await wire.client.update({ tmux: true, multiplexer: 'zellij' });
+    expect(chosen).toEqual({
+      success: true,
+      data: { settings: { tmux: true, multiplexer: 'zellij' }, parseError: false },
+    });
+    expect(JSON.parse(await fs.readFile(settingsPath, 'utf8'))).toEqual({
+      tmux: true,
+      multiplexer: 'zellij',
+    });
+
+    const cleared = await wire.client.update({ multiplexer: null });
+    expect(cleared).toEqual({
+      success: true,
+      data: { settings: { tmux: true }, parseError: false },
+    });
+  });
+
+  it('reads an unknown multiplexer as unset without dropping other settings', () => {
+    const parsed = parseHostSettings(
+      JSON.stringify({ tmux: true, shellSetup: 'source ~/.profile', multiplexer: 'screen' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toMatchObject({ tmux: true, shellSetup: 'source ~/.profile' });
+    expect(parsed.data.multiplexer).toBeUndefined();
   });
 });

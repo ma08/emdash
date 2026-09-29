@@ -1,3 +1,4 @@
+import { SESSION_MULTIPLEXERS } from '@emdash/core/primitives/session-multiplexer/api';
 import { z } from 'zod';
 import type { LocalProjectSettings, ProjectSettings } from '@core/primitives/app-settings/api';
 import {
@@ -11,6 +12,7 @@ const projectSettingsSchema = z.object({
   branchPrefix: z.string().transform(normalizeBranchPrefix),
   appendRandomBranchSuffix: z.boolean(),
   tmuxByDefault: z.boolean(),
+  multiplexer: z.enum(SESSION_MULTIPLEXERS),
 });
 
 const localProjectSettingsSchema = z.object({
@@ -26,6 +28,7 @@ export const projectSettingsContribution = defineSettingsContribution<'project',
     branchPrefix: 'emdash',
     appendRandomBranchSuffix: true,
     tmuxByDefault: false,
+    multiplexer: 'tmux',
   },
 });
 

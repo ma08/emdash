@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveEffectiveGitSettings,
   resolveEffectiveSettings,
+  resolveMultiplexer,
   resolveTmux,
   type RepoFacts,
   type StoredSettings,
@@ -356,6 +357,31 @@ describe('resolveTmux', () => {
   it('inherits the app default when the host has no override', () => {
     expect(resolveTmux({ hostTmux: null, appDefaultTmux: true })).toEqual({
       value: true,
+      provenance: { kind: 'inferred', from: 'app default' },
+    });
+  });
+});
+
+describe('resolveMultiplexer', () => {
+  it('uses the host multiplexer before the app default', () => {
+    expect(
+      resolveMultiplexer({ hostMultiplexer: 'zellij', appDefaultMultiplexer: 'tmux' })
+    ).toEqual({
+      value: 'zellij',
+      provenance: { kind: 'inferred', from: 'host default' },
+    });
+  });
+
+  it('inherits the app default when the host has no override', () => {
+    expect(resolveMultiplexer({ hostMultiplexer: null, appDefaultMultiplexer: 'zellij' })).toEqual({
+      value: 'zellij',
+      provenance: { kind: 'inferred', from: 'app default' },
+    });
+  });
+
+  it('resolves to tmux for layers that predate zellij support', () => {
+    expect(resolveMultiplexer({})).toEqual({
+      value: 'tmux',
       provenance: { kind: 'inferred', from: 'app default' },
     });
   });

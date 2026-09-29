@@ -201,6 +201,7 @@ describe('createConversationsWireController', () => {
             path: target.workspacePath,
           },
           tmux: false,
+          multiplexer: 'tmux' as const,
           env: {
             CLAUDE_CONFIG_DIR: '/project/config',
             PROJECT_ONLY: 'project',

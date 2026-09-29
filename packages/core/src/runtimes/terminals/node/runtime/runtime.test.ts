@@ -18,7 +18,11 @@ import type {
   TerminalShellResolver,
 } from '#primitives/terminal-shell/api';
 import type { TerminalSessionState } from '#runtimes/terminals/api';
-import { makeLegacyTmuxSessionName, makeTmuxSessionName } from '#services/pty/api';
+import {
+  makeLegacyTmuxSessionName,
+  makeTmuxSessionName,
+  makeZellijSessionName,
+} from '#services/pty/api';
 import { FakePtySpawner } from '#services/pty/testing';
 import {
   expectNoSessionResidue,
@@ -584,6 +588,244 @@ describe('TerminalsRuntime', () => {
       '-F',
       '#{session_name}\t#{session_activity}\t#{@emdash_identity}',
     ]);
+    await scope.dispose();
+  });
+
+  it.runIf(process.platform !== 'win32')(
+    'starts zellij terminals under a name that carries the session identity',
+    async () => {
+      const exec = fakeExec();
+      const spawner = new FakePtySpawner();
+      const scope = createScope({ label: 'test-terminals-zellij' });
+      const runtime = new TerminalsRuntime({
+        spawner,
+        userEnv: async () => testUserEnv(),
+        exec,
+        scope,
+      });
+      const key = { workspace: testWorkspace(), id: 'terminal-1' };
+      const sessionKey = `${workspaceKey(key.workspace)}:${key.id}`;
+
+      await runtime.start({ key, spec: { cwd: '/repo/Fix login', env: {}, zellij: true } });
+
+      const { invocation } = spawner.specs[0]!;
+      if (invocation.kind !== 'argv') throw new Error('Expected argv invocation');
+      expect(invocation.argv.at(-1)).toContain(makeZellijSessionName(sessionKey, 'Fix login'));
+      expect(invocation.argv.at(-1)).toContain('zellij attach --create');
+      expect(invocation.argv.at(-1)).not.toContain('tmux');
+      expect(exec.exec).toHaveBeenCalledWith('zellij', ['list-sessions', '--no-formatting'], {
+        timeout: 10_000,
+      });
+      expect((await sessions(runtime))[sessionKey]).toMatchObject({ zellij: true });
+      await scope.dispose();
+    }
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'attaches a zellij terminal to the session already running for it',
+    async () => {
+      const key = { workspace: testWorkspace(), id: 'terminal-1' };
+      const sessionKey = `${workspaceKey(key.workspace)}:${key.id}`;
+      const running = makeZellijSessionName(sessionKey, 'old-name');
+      const exec = fakeExec();
+      exec.exec.mockResolvedValue({ stdout: `${running} [Created 1m ago]\n`, stderr: '' });
+      const spawner = new FakePtySpawner();
+      const scope = createScope({ label: 'test-terminals-zellij-attach' });
+      const runtime = new TerminalsRuntime({
+        spawner,
+        userEnv: async () => testUserEnv(),
+        exec,
+        scope,
+      });
+
+      await runtime.start({ key, spec: { cwd: '/repo/new-name', env: {}, zellij: true } });
+
+      const { invocation } = spawner.specs[0]!;
+      if (invocation.kind !== 'argv') throw new Error('Expected argv invocation');
+      expect(invocation.argv.at(-1)).toContain(running);
+      await scope.dispose();
+    }
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'kill deletes every zellij session of the terminal and still evicts when listing fails',
+    async () => {
+      const key = { workspace: testWorkspace(), id: 'terminal-1' };
+      const sessionKey = `${workspaceKey(key.workspace)}:${key.id}`;
+      const running = makeZellijSessionName(sessionKey, 'repo');
+      const remnant = makeZellijSessionName(sessionKey, 'older');
+      const exec = fakeExec();
+      exec.exec.mockResolvedValue({
+        stdout: `${running} [Created 1m ago]\n${remnant} [Created 2h ago] (EXITED - attach to resurrect)\nscratch [Created 1m ago]\n`,
+        stderr: '',
+      });
+      const spawner = new FakePtySpawner();
+      const scope = createScope({ label: 'test-terminals-zellij-kill' });
+      const runtime = new TerminalsRuntime({
+        spawner,
+        userEnv: async () => testUserEnv(),
+        exec,
+        scope,
+      });
+
+      await runtime.start({ key, spec: { cwd: '/repo', env: {}, zellij: true } });
+      await runtime.kill(key);
+
+      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', running], {
+        timeout: 10_000,
+      });
+      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', remnant], {
+        timeout: 10_000,
+      });
+      expect(exec.exec).not.toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', 'scratch'],
+        { timeout: 10_000 }
+      );
+      expect(exec.exec).not.toHaveBeenCalledWith('tmux', expect.anything());
+      expectNoSessionResidue(sessionKey, leakContainers(runtime));
+
+      await runtime.start({ key, spec: { cwd: '/repo', env: {}, zellij: true } });
+      exec.exec.mockRejectedValue({ exitCode: 2, stderr: 'permission denied' });
+      await expect(runtime.kill(key)).resolves.toEqual({ success: true, data: undefined });
+      expectNoSessionResidue(sessionKey, leakContainers(runtime));
+      await scope.dispose();
+    }
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'killZellijSessions deletes discovered sessions and tolerates a failed listing',
+    async () => {
+      const wanted = makeZellijSessionName('session-1', 'repo');
+      const other = makeZellijSessionName('session-2', 'repo');
+      const exec = fakeExec();
+      exec.exec.mockResolvedValue({
+        stdout: `${wanted} [Created 1m ago] (EXITED - attach to resurrect)\n${other} [Created 1m ago]\n`,
+        stderr: '',
+      });
+      const scope = createScope({ label: 'test-terminals-zellij-bulk-kill' });
+      const runtime = new TerminalsRuntime({
+        spawner: new FakePtySpawner(),
+        userEnv: async () => testUserEnv(),
+        exec,
+        scope,
+      });
+
+      await expect(
+        runtime.killZellijSessions({ sessionIdentities: ['session-1'] })
+      ).resolves.toEqual({ success: true, data: undefined });
+      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', wanted], {
+        timeout: 10_000,
+      });
+      expect(exec.exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', other], {
+        timeout: 10_000,
+      });
+
+      exec.exec.mockRejectedValue({ exitCode: 2, stderr: 'permission denied' });
+      await expect(
+        runtime.killZellijSessions({ sessionIdentities: ['session-1'] })
+      ).resolves.toEqual({ success: true, data: undefined });
+      await scope.dispose();
+    }
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'killZellijSessions also matches terminals, whose identity is scoped to the workspace',
+    async () => {
+      const workspace = testWorkspace();
+      const key = { workspace, id: 'project-1:task-1:terminal-1' };
+      const exec = fakeExec();
+      const spawner = new FakePtySpawner();
+      const scope = createScope({ label: 'test-terminals-zellij-untracked' });
+      const runtime = new TerminalsRuntime({
+        spawner,
+        userEnv: async () => testUserEnv(),
+        exec,
+        scope,
+      });
+
+      // Learn the name the runtime gives this terminal's session.
+      await runtime.start({ key, spec: { cwd: '/repo', env: {}, zellij: true } });
+      const { invocation } = spawner.specs[0]!;
+      if (invocation.kind !== 'argv') throw new Error('Expected argv invocation');
+      const terminalSession = /session=([a-z0-9_-]+-[0-9a-f]{10});/u.exec(
+        invocation.argv.at(-1) ?? ''
+      )?.[1];
+      expect(terminalSession).toBeDefined();
+      const agentSession = makeZellijSessionName(key.id, 'repo');
+      expect(terminalSession).not.toBe(agentSession);
+
+      exec.exec.mockClear();
+      exec.exec.mockResolvedValue({
+        stdout: `${terminalSession} [Created 1m ago]\n${agentSession} [Created 1m ago]\n`,
+        stderr: '',
+      });
+
+      // Without the workspace only the identity as given is matched.
+      await runtime.killZellijSessions({ sessionIdentities: [key.id] });
+      expect(exec.exec).toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', agentSession],
+        { timeout: 10_000 }
+      );
+      expect(exec.exec).not.toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', terminalSession],
+        { timeout: 10_000 }
+      );
+
+      await runtime.killZellijSessions({ sessionIdentities: [key.id], workspace });
+      expect(exec.exec).toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', terminalSession],
+        { timeout: 10_000 }
+      );
+      await scope.dispose();
+    }
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'keeps zellij terminals in the namespace the host lists',
+    async () => {
+      const spawner = new FakePtySpawner();
+      const scope = createScope({ label: 'test-terminals-zellij-namespace' });
+      const runtime = new TerminalsRuntime({
+        spawner,
+        userEnv: async () => ({ PATH: '/bin', ZELLIJ_SOCKET_DIR: '/host/sockets' }),
+        exec: fakeExec(),
+        scope,
+      });
+      const env = { ZELLIJ_SOCKET_DIR: '/project/sockets', KEEP: '1' };
+
+      await runtime.start({
+        key: { workspace: testWorkspace(), id: 'terminal-1' },
+        spec: { cwd: '/repo', env, zellij: true },
+      });
+      await runtime.start({
+        key: { workspace: testWorkspace(), id: 'terminal-2' },
+        spec: { cwd: '/repo', env },
+      });
+
+      expect(spawner.specs[0]!.env).toMatchObject({
+        ZELLIJ_SOCKET_DIR: '/host/sockets',
+        KEEP: '1',
+      });
+      expect(spawner.specs[1]!.env).toMatchObject({ ZELLIJ_SOCKET_DIR: '/project/sockets' });
+      await scope.dispose();
+    }
+  );
+
+  it('killZellijSessions returns ok without calling exec when no exec is injected', async () => {
+    const scope = createScope({ label: 'test-terminals' });
+    const runtime = new TerminalsRuntime({
+      spawner: new FakePtySpawner(),
+      userEnv: async () => testUserEnv(),
+      scope,
+    });
+
+    await expect(runtime.killZellijSessions({ sessionIdentities: ['session-1'] })).resolves.toEqual(
+      { success: true, data: undefined }
+    );
     await scope.dispose();
   });
 

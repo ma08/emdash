@@ -73,6 +73,7 @@ type TerminalContext = Readonly<{
   workspace: HostFileRef;
   key: TerminalKey;
   tmuxEnabled: boolean;
+  zellijEnabled: boolean;
   shellSetup?: string;
   taskEnvVars: Record<string, string>;
   gitCredentials?: GitCredentialsSessionSpec;
@@ -302,6 +303,7 @@ async function startRuntimeTerminal(
         shellIntent: terminal.shellId,
         shellSetup: context.data.shellSetup,
         tmux: context.data.tmuxEnabled,
+        zellij: context.data.zellijEnabled,
         env: {
           ...context.data.taskEnvVars,
           ...colorEnv,
@@ -343,7 +345,8 @@ async function resolveTerminalContext(
       identity,
       makePtySessionId(terminal.projectId, terminal.taskId, terminal.id)
     ),
-    tmuxEnabled: launchContext.data.tmux,
+    tmuxEnabled: launchContext.data.tmux && launchContext.data.multiplexer !== 'zellij',
+    zellijEnabled: launchContext.data.tmux && launchContext.data.multiplexer === 'zellij',
     shellSetup: launchContext.data.shellSetup,
     taskEnvVars: launchContext.data.env,
     gitCredentials,

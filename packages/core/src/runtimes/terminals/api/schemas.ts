@@ -83,6 +83,8 @@ export const startTerminalSpecSchema = z
     shellIntent: terminalShellIdSchema.optional(),
     shellSetup: z.string().optional(),
     tmux: z.boolean().optional(),
+    /** Run the terminal inside zellij instead of tmux; `tmux` wins when both are set. */
+    zellij: z.boolean().optional(),
     /**
      * Per-session git credential behavior, resolved desktop-side from project
      * settings (spec: github-git-settings §4). Absent = native behavior.
@@ -105,6 +107,7 @@ export const terminalSessionStateSchema = z.object({
   status: z.enum(['running', 'exited']),
   startCount: z.number().int().nonnegative(),
   tmux: z.boolean().optional(),
+  zellij: z.boolean().optional(),
   pid: z.number().int().positive().optional(),
   cols: z.number().int().positive(),
   rows: z.number().int().positive(),
@@ -142,3 +145,15 @@ export const killTmuxSessionsInputSchema = z.object({
 });
 
 export type KillTmuxSessionsInput = z.infer<typeof killTmuxSessionsInputSchema>;
+
+export const killZellijSessionsInputSchema = z.object({
+  sessionIdentities: z.array(z.string().min(1)),
+  /**
+   * Workspace the identities may belong to as terminal ids. A terminal's
+   * session identity is scoped to its workspace, so with this set each
+   * identity is also matched in that form.
+   */
+  workspace: hostFileRefSchema.optional(),
+});
+
+export type KillZellijSessionsInput = z.infer<typeof killZellijSessionsInputSchema>;

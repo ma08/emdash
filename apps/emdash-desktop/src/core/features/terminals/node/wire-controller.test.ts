@@ -29,6 +29,7 @@ const controllerDeps = {
       ok({
         workspace: identity,
         tmux: false,
+        multiplexer: 'tmux' as const,
         env: {},
       })
     ),
@@ -211,6 +212,7 @@ describe('createTerminalsWireController', () => {
       ok({
         workspace: identity,
         tmux: true,
+        multiplexer: 'tmux' as const,
         shellSetup: 'source .workspace-env',
         env: { EMDASH_DEFAULT_BRANCH: 'main' },
       })
@@ -250,6 +252,7 @@ describe('createTerminalsWireController', () => {
         spec: expect.objectContaining({
           shellSetup: 'source .workspace-env',
           tmux: true,
+          zellij: false,
           env: expect.objectContaining({ EMDASH_DEFAULT_BRANCH: 'main' }),
         }),
       })
@@ -310,3 +313,48 @@ function selecting<T>(row: T) {
     }),
   };
 }
+
+describe('createTerminalsWireController zellij sessions', () => {
+  it('asks the runtime for a zellij session instead of a tmux one', async () => {
+    const terminalRow = {
+      id: 'terminal-1',
+      projectId: identity.projectId,
+      taskId: 'task-1',
+      name: 'Terminal',
+      shellId: 'default',
+      ssh: 0,
+    };
+    const select = vi.fn().mockReturnValueOnce(selecting(terminalRow));
+    const start = vi.fn(async () => ok(undefined));
+    const controller = createTerminalsWireController({
+      ...controllerDeps,
+      db: { select } as never,
+      sessionLaunchContexts: {
+        resolve: vi.fn(async () =>
+          ok({
+            workspace: identity,
+            tmux: true,
+            multiplexer: 'zellij' as const,
+            env: {},
+          })
+        ),
+      },
+      runtimes: {
+        client: vi.fn(async () => ok({ terminals: { start } })),
+      } as unknown as TerminalsRuntimeBroker,
+      workspaceIdentity: { resolve: vi.fn(async () => identity) },
+    });
+
+    await controller.call('hydrate', {
+      projectId: identity.projectId,
+      taskId: terminalRow.taskId,
+      terminalId: terminalRow.id,
+    });
+
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spec: expect.objectContaining({ tmux: false, zellij: true }),
+      })
+    );
+  });
+});
