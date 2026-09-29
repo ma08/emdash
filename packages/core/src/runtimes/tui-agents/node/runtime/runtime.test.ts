@@ -1354,6 +1354,40 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     expect(spawner.specs).toHaveLength(1);
   });
 
+  it.each([
+    ['current', { tmux: { identity: 'project:task:conversation-1' } }],
+    ['legacy', { tmuxSessionName: makeLegacyTmuxSessionName('project:task:conversation-1') }],
+  ])(
+    'reconciles a %s tmux intent that also names zellij without consulting zellij',
+    async (_kind, tmuxFields) => {
+      const tmuxIdentity = 'project:task:conversation-1';
+      const intents = createMemorySessionIntentStore();
+      await intents.saveActive({
+        conversationId: 'conversation-1',
+        sessionId: 'provider-session',
+        payload: { ...startInput({ sessionId: 'provider-session', zellij }), ...tmuxFields },
+      });
+      const exec = vi.fn((command: string, _args?: string[]) =>
+        command === 'zellij'
+          ? Promise.reject({ exitCode: 2, stderr: 'permission denied' })
+          : Promise.resolve({
+              stdout: [
+                `${makeTmuxSessionName(tmuxIdentity, 'workspace')}\t42\t`,
+                `${makeLegacyTmuxSessionName(tmuxIdentity)}\t42\t`,
+              ].join('\n'),
+              stderr: '',
+            })
+      );
+      const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+      await runtime.reconcile();
+
+      expect(exec).not.toHaveBeenCalledWith('zellij', expect.anything(), expect.anything());
+      expect(spawner.specs).toHaveLength(1);
+      expect(JSON.stringify(spawner.specs[0]!.invocation)).toContain('tmux -u attach-session');
+    }
+  );
+
   it('ignores suspended zellij intents when deciding whether to list zellij', async () => {
     const tmuxIdentity = 'project:task:conversation-1';
     const intents = createMemorySessionIntentStore();

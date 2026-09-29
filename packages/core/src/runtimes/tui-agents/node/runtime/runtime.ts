@@ -289,7 +289,7 @@ export class TuiAgentsRuntime {
               this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
               // zellij is consulted only when an active intent needs it, so a
               // host that never used it cannot have its reconcile vetoed by it.
-              this.zellijSessions = intents.some(activeIntentUsesZellij)
+              this.zellijSessions = intents.some((intent) => this.activeIntentUsesZellij(intent))
                 ? await listZellijSessions(this.deps.exec)
                 : [];
               return { ctx: undefined };
@@ -1196,6 +1196,19 @@ export class TuiAgentsRuntime {
     });
   }
 
+  /**
+   * Only active intents are resumed, so only they decide whether reconcile
+   * consults zellij. The intent is read the way the gate reads it, so one
+   * that would resume in tmux never asks for the zellij inventory.
+   */
+  private activeIntentUsesZellij(intent: SessionIntent): boolean {
+    if (intent.status !== 'active') return false;
+    const parsed = persistedTuiAgentStartInputSchema.safeParse(intent.payload);
+    return (
+      parsed.success && zellijIdentityOf(this.normalizePersistedInput(parsed.data)) !== undefined
+    );
+  }
+
   private normalizePlatformInput(input: TuiAgentStartInput): TuiAgentStartInput {
     if ((this.deps.platform ?? process.platform) !== 'win32') return input;
     if (!input.tmux && !input.zellij) return input;
@@ -1233,19 +1246,6 @@ function zellijIdentityOf(
   input: Pick<TuiAgentStartInput, 'tmux' | 'zellij'> | undefined
 ): string | undefined {
   return input?.tmux ? undefined : input?.zellij?.identity;
-}
-
-/** Only active intents are resumed, so only they decide whether reconcile consults zellij. */
-function activeIntentUsesZellij(intent: SessionIntent): boolean {
-  if (intent.status !== 'active') return false;
-  const payload: unknown = intent.payload;
-  return (
-    typeof payload === 'object' &&
-    payload !== null &&
-    'zellij' in payload &&
-    typeof payload.zellij === 'object' &&
-    payload.zellij !== null
-  );
 }
 
 function maxNullable(a: number | null, b: number | null | undefined): number | null {

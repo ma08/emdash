@@ -8,6 +8,7 @@ import { useCallback, useMemo } from 'react';
 import { machinesContract } from '@core/features/machines/api';
 import { getMachinesClient } from '@core/features/machines/api/browser/client';
 import { useRemoteModelState } from '@core/primitives/wire/browser/use-remote-model-state';
+import { assertHostSettingsApplied } from './host-settings-applied';
 
 let hostSettingsRemotePromise:
   | Promise<RemoteModel<typeof machinesContract.hostSettings>>
@@ -46,6 +47,7 @@ export function useHostSettings(
       const client = await getMachinesClient();
       const result = await client.updateHostSettings({ machineId, patch });
       if (!result.success) throw new Error(result.error.message, { cause: result.error });
+      assertHostSettingsApplied(patch, result.data);
     },
     [machineId]
   );
