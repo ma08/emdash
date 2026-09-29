@@ -4,6 +4,7 @@ import { terminalShellAvailabilityListSchema } from '#primitives/terminal-shell/
 import {
   startTerminalInputSchema,
   killTmuxSessionsInputSchema,
+  killZellijSessionsInputSchema,
   shellAvailabilityFailedErrorSchema,
   terminalControlInputSchema,
   terminalDataInputSchema,
@@ -59,6 +60,11 @@ export const terminalsContract = defineContract({
   }),
   killTmuxSessions: fallible({
     input: killTmuxSessionsInputSchema,
+    data: z.void(),
+    error: terminalRuntimeErrorSchema,
+  }),
+  killZellijSessions: fallible({
+    input: killZellijSessionsInputSchema,
     data: z.void(),
     error: terminalRuntimeErrorSchema,
   }),

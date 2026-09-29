@@ -16,6 +16,7 @@ import type {
 import {
   terminalsContract,
   type KillTmuxSessionsInput,
+  type KillZellijSessionsInput,
   type ShellAvailabilityFailedError,
   type StartTerminalInput,
   type StartTerminalSpec,
@@ -34,10 +35,13 @@ import {
 import {
   buildTerminalEnv,
   findTmuxSessionNamesByIdentity,
+  findZellijSessionNamesByIdentity,
   killTmuxSession,
+  killZellijSession,
   makeLegacyTmuxSessionName,
   makeTmuxSessionName,
   resolveTmuxSession,
+  resolveZellijSession,
   resolveLocalPtySpawn,
   PtyRegistry,
   type PtySession,
@@ -307,6 +311,29 @@ export class TerminalsRuntime {
     return ok(undefined);
   }
 
+  /**
+   * Best-effort cleanup for sessions this runtime may no longer track. zellij
+   * names carry the identity hash, so discovery is the only lookup needed.
+   */
+  async killZellijSessions(
+    input: KillZellijSessionsInput
+  ): Promise<Result<void, TerminalRuntimeError>> {
+    if (process.platform === 'win32') return ok(undefined);
+    await this.withExecutionContext(async (exec) => {
+      try {
+        const discovered = await findZellijSessionNamesByIdentity(exec, input.sessionIdentities);
+        for (const names of discovered.values()) {
+          for (const name of names) await killZellijSession(exec, name);
+        }
+      } catch (error) {
+        this.logger.warn('terminals: failed to discover zellij sessions', {
+          error: String(error),
+        });
+      }
+    });
+    return ok(undefined);
+  }
+
   dispose(): void {
     this.lifecycle.dispose();
     this.registry.killAll();
@@ -325,6 +352,7 @@ export class TerminalsRuntime {
    */
   private async killSession(sessionKey: string, cause: DeactivationCause): Promise<void> {
     await this.killTmuxForSession(sessionKey);
+    await this.killZellijForSession(sessionKey);
     await this.lifecycle.evict(sessionKey, { cause });
   }
 
@@ -359,6 +387,14 @@ export class TerminalsRuntime {
         identity: resolvedTmux.writeIdentity ? sessionKey : undefined,
       };
     }
+    let zellij: { name: string } | undefined;
+    if (usesZellij(spec)) {
+      const resolvedZellij = await this.withExecutionContext((exec) =>
+        resolveZellijSession(exec, { identity: sessionKey, label: workspaceLabel(spec.cwd) })
+      );
+      if (!resolvedZellij) throw new Error('No zellij execution context is available');
+      zellij = { name: resolvedZellij.name };
+    }
     const resolved = resolveLocalPtySpawn({
       intent: {
         kind: 'interactive-shell',
@@ -366,6 +402,7 @@ export class TerminalsRuntime {
         shellProfile,
         shellSetup: spec.shellSetup,
         tmux,
+        zellij,
       },
       platform: process.platform,
       env,
@@ -424,6 +461,22 @@ export class TerminalsRuntime {
       });
       if (resolved.exists) await killTmuxSession(exec, resolved.name);
     });
+  }
+
+  private async killZellijForSession(sessionKey: string): Promise<void> {
+    const config = this.interactiveConfigs.get(sessionKey);
+    if (!config || !usesZellij(config.spec)) return;
+    try {
+      await this.withExecutionContext(async (exec) => {
+        const found = await findZellijSessionNamesByIdentity(exec, [sessionKey]);
+        for (const name of found.get(sessionKey) ?? []) await killZellijSession(exec, name);
+      });
+    } catch (error) {
+      // Closing the terminal must still release it when zellij cannot be listed.
+      this.logger.warn('terminals: failed to clean up the zellij session', {
+        error: String(error),
+      });
+    }
   }
 
   private async shellResolverFor(
@@ -486,6 +539,7 @@ export class TerminalsRuntime {
         status: session.exited ? 'exited' : 'running',
         startCount: this.startCounts.get(key) ?? existing?.startCount ?? 1,
         tmux: this.interactiveConfigs.get(key)?.spec.tmux,
+        zellij: this.interactiveConfigs.get(key)?.spec.zellij,
         pid: session.getPid(),
         cols: session.spec.cols,
         rows: session.spec.rows,
@@ -613,6 +667,11 @@ export class TerminalsRuntime {
 
 function workspaceLabel(path: string): string {
   return path.split(/[\\/]/u).filter(Boolean).at(-1) ?? 'workspace';
+}
+
+/** zellij is ignored on Windows, and tmux wins when a spec requests both. */
+function usesZellij(spec: StartTerminalSpec): boolean {
+  return Boolean(spec.zellij) && !spec.tmux && process.platform !== 'win32';
 }
 
 function scopeKeyFor(workspace: HostFileRef): string {
