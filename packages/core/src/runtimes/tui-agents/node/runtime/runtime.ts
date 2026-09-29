@@ -603,6 +603,10 @@ export class TuiAgentsRuntime {
     try {
       if (zellijIdentityOf(config.input)) {
         env = pinZellijNamespace(launchEnv, await this.deps.env());
+        // A cancelled launch must not go on to list sessions while it holds the mutex.
+        if (!this.isCurrentGeneration(config.input.conversationId, generation)) {
+          return this.cancelledSpawn(config.input.conversationId);
+        }
       }
       spawnSpec = await this.spawnSpec(command, config.input, env);
     } catch (error) {

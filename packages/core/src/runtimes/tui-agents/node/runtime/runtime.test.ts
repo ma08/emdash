@@ -1053,6 +1053,41 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     });
   });
 
+  it('does not list zellij for a launch cancelled while the host environment was read', async () => {
+    // Every listing stays pending until released, so a launch that listed
+    // sessions after its cancellation could not resolve below.
+    const held: Array<() => void> = [];
+    const exec = vi.fn(
+      (_command: string, _args?: string[]) =>
+        new Promise<{ stdout: string; stderr: string }>((resolve) => {
+          held.push(() => resolve({ stdout: '', stderr: '' }));
+        })
+    );
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+    const deps = (runtime as unknown as { deps: { env: () => Promise<NodeJS.ProcessEnv> } }).deps;
+    let releaseEnv: (() => void) | undefined;
+    deps.env = () =>
+      new Promise((resolve) => {
+        releaseEnv = () => resolve({ PATH: '/bin', SHELL: '/bin/bash' });
+      });
+
+    const launch = runtime.startSession(startInput({ zellij }));
+    await vi.waitFor(() => expect(releaseEnv).toBeDefined());
+    const stopped = runtime.stopSession('conversation-1');
+    releaseEnv?.();
+
+    await expect(launch).resolves.toMatchObject({
+      success: false,
+      error: { message: 'Launch was cancelled by a newer session operation' },
+    });
+    expect(spawner.specs).toHaveLength(0);
+
+    // The only listing is the stop's own cleanup, queued behind the launch.
+    await vi.waitFor(() => expect(held).toHaveLength(1));
+    held.splice(0).forEach((release) => release());
+    await stopped;
+  });
+
   it('keeps the stopped state when a cancelled launch then fails to list zellij', async () => {
     let failListing: (() => void) | undefined;
     const exec = vi.fn((command: string, _args?: string[]) =>
