@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IExecutionContext } from '#primitives/exec/api';
-import { findZellijSessionNamesByIdentity, resolveZellijSession } from './zellij';
+import {
+  findZellijSessionNamesByIdentity,
+  pinZellijNamespace,
+  resolveZellijSession,
+} from './zellij';
 import { makeZellijSessionName } from './zellij-identity';
 
 const IDENTITY = 'project-1:task-1:conversation-1';
@@ -86,5 +90,22 @@ describe('findZellijSessionNamesByIdentity', () => {
       new Map()
     );
     expect(exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('pinZellijNamespace', () => {
+  it('replaces a launch override with the namespace the host uses', () => {
+    expect(
+      pinZellijNamespace(
+        { PATH: '/bin', ZELLIJ_SOCKET_DIR: '/project/sockets' },
+        { ZELLIJ_SOCKET_DIR: '/host/sockets' }
+      )
+    ).toEqual({ PATH: '/bin', ZELLIJ_SOCKET_DIR: '/host/sockets' });
+  });
+
+  it('drops a launch override when the host uses the zellij default', () => {
+    expect(pinZellijNamespace({ PATH: '/bin', ZELLIJ_SOCKET_DIR: '/project/sockets' }, {})).toEqual(
+      { PATH: '/bin' }
+    );
   });
 });

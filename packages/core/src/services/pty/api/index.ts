@@ -69,6 +69,7 @@ export {
 } from './zellij-identity';
 export {
   findZellijSessionNamesByIdentity,
+  pinZellijNamespace,
   resolveZellijSession,
   runningZellijSessionFor,
   type ResolvedZellijSession,

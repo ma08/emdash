@@ -47,3 +47,18 @@ export function runningZellijSessionFor(
     (session) => session.active && zellijSessionBelongsTo(session.name, identity)
   )?.name;
 }
+
+/**
+ * Emdash finds its zellij sessions by listing them in the host's zellij
+ * namespace. A session launched with another `ZELLIJ_SOCKET_DIR`, for example
+ * from a project's environment settings, would be invisible to resolve,
+ * reconcile and cleanup, so a zellij launch keeps the host's value.
+ */
+export function pinZellijNamespace(
+  launchEnv: Record<string, string>,
+  hostEnv: Record<string, string | undefined>
+): Record<string, string> {
+  const { ZELLIJ_SOCKET_DIR: _override, ...env } = launchEnv;
+  const hostSocketDir = hostEnv['ZELLIJ_SOCKET_DIR'];
+  return hostSocketDir ? { ...env, ZELLIJ_SOCKET_DIR: hostSocketDir } : env;
+}

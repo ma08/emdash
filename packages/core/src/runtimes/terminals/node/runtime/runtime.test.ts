@@ -784,6 +784,37 @@ describe('TerminalsRuntime', () => {
     }
   );
 
+  it.runIf(process.platform !== 'win32')(
+    'keeps zellij terminals in the namespace the host lists',
+    async () => {
+      const spawner = new FakePtySpawner();
+      const scope = createScope({ label: 'test-terminals-zellij-namespace' });
+      const runtime = new TerminalsRuntime({
+        spawner,
+        userEnv: async () => ({ PATH: '/bin', ZELLIJ_SOCKET_DIR: '/host/sockets' }),
+        exec: fakeExec(),
+        scope,
+      });
+      const env = { ZELLIJ_SOCKET_DIR: '/project/sockets', KEEP: '1' };
+
+      await runtime.start({
+        key: { workspace: testWorkspace(), id: 'terminal-1' },
+        spec: { cwd: '/repo', env, zellij: true },
+      });
+      await runtime.start({
+        key: { workspace: testWorkspace(), id: 'terminal-2' },
+        spec: { cwd: '/repo', env },
+      });
+
+      expect(spawner.specs[0]!.env).toMatchObject({
+        ZELLIJ_SOCKET_DIR: '/host/sockets',
+        KEEP: '1',
+      });
+      expect(spawner.specs[1]!.env).toMatchObject({ ZELLIJ_SOCKET_DIR: '/project/sockets' });
+      await scope.dispose();
+    }
+  );
+
   it('killZellijSessions returns ok without calling exec when no exec is injected', async () => {
     const scope = createScope({ label: 'test-terminals' });
     const runtime = new TerminalsRuntime({

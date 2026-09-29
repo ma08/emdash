@@ -40,6 +40,7 @@ import {
   killZellijSession,
   makeLegacyTmuxSessionName,
   makeTmuxSessionName,
+  pinZellijNamespace,
   resolveTmuxSession,
   resolveZellijSession,
   resolveLocalPtySpawn,
@@ -374,12 +375,13 @@ export class TerminalsRuntime {
 
     const userEnv = await this.loadUserEnv();
     const shellProfile = await this.resolveShellProfile(key, spec.shellIntent, userEnv);
-    const env = buildTerminalEnv({
+    const launchEnv = buildTerminalEnv({
       baseEnv: userEnv,
       shellProfile,
       overrides: spec.env,
       gitCredentials: spec.gitCredentials,
     });
+    const env = usesZellij(spec) ? pinZellijNamespace(launchEnv, userEnv) : launchEnv;
     let tmux: { name: string; identity?: string } | undefined;
     if (spec.tmux && process.platform === 'win32') {
       tmux = { name: makeTmuxSessionName(sessionKey, workspaceLabel(spec.cwd)) };

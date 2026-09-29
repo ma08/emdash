@@ -48,6 +48,7 @@ import {
   logLocalPtySpawnWarnings,
   makeLegacyTmuxSessionName,
   makeTmuxSessionName,
+  pinZellijNamespace,
   PtyRegistry,
   resolveLocalPtySpawn,
   resolveTmuxSession,
@@ -285,11 +286,14 @@ export class TuiAgentsRuntime {
             }
             try {
               // The prefetch doubles as the gate's liveness table; a listing
-              // failure vetoes the whole run (intents stay untouched).
-              this.tmuxActivity = await listTmuxSessionActivity(this.deps.exec);
-              // zellij is consulted only when an active intent needs it, so a
-              // host that never used it cannot have its reconcile vetoed by it.
-              this.zellijSessions = intents.some((intent) => this.activeIntentUsesZellij(intent))
+              // failure vetoes the whole run (intents stay untouched). Each
+              // multiplexer is consulted only when an active intent resumes
+              // in it, so a failure of one cannot block recovery in the other.
+              const resumesIn = this.activeIntentMultiplexers(intents);
+              this.tmuxActivity = resumesIn.tmux
+                ? await listTmuxSessionActivity(this.deps.exec)
+                : new Map();
+              this.zellijSessions = resumesIn.zellij
                 ? await listZellijSessions(this.deps.exec)
                 : [];
               return { ctx: undefined };
@@ -580,7 +584,7 @@ export class TuiAgentsRuntime {
 
     // Git-credential behavior is applied last through the blessed construction (spec:
     // github-git-settings §4) so a "none" scrub wins over provider and hook env.
-    const env = applyGitCredentialsToEnv(
+    const launchEnv = applyGitCredentialsToEnv(
       mergeAgentEnvLayers(
         currentAgentEnvPlatform(this.deps.platform),
         {
@@ -594,6 +598,12 @@ export class TuiAgentsRuntime {
       ),
       config.input.gitCredentials
     );
+    const env = zellijIdentityOf(config.input)
+      ? pinZellijNamespace(launchEnv, await this.deps.env())
+      : launchEnv;
+    if (!this.isCurrentGeneration(config.input.conversationId, generation)) {
+      return this.cancelledSpawn(config.input.conversationId);
+    }
     let spawnSpec: Pick<PtySpawnSpec, 'invocation'>;
     try {
       spawnSpec = await this.spawnSpec(command, config.input, env);
@@ -1197,16 +1207,23 @@ export class TuiAgentsRuntime {
   }
 
   /**
-   * Only active intents are resumed, so only they decide whether reconcile
-   * consults zellij. The intent is read the way the gate reads it, so one
-   * that would resume in tmux never asks for the zellij inventory.
+   * Which multiplexers the active intents would resume in. Only active
+   * intents are resumed, and each is read the way the gate reads it.
    */
-  private activeIntentUsesZellij(intent: SessionIntent): boolean {
-    if (intent.status !== 'active') return false;
-    const parsed = persistedTuiAgentStartInputSchema.safeParse(intent.payload);
-    return (
-      parsed.success && zellijIdentityOf(this.normalizePersistedInput(parsed.data)) !== undefined
-    );
+  private activeIntentMultiplexers(intents: readonly SessionIntent[]): {
+    tmux: boolean;
+    zellij: boolean;
+  } {
+    const resumesIn = { tmux: false, zellij: false };
+    for (const intent of intents) {
+      if (intent.status !== 'active') continue;
+      const parsed = persistedTuiAgentStartInputSchema.safeParse(intent.payload);
+      if (!parsed.success) continue;
+      const input = this.normalizePersistedInput(parsed.data);
+      if (input.tmux) resumesIn.tmux = true;
+      else if (input.zellij) resumesIn.zellij = true;
+    }
+    return resumesIn;
   }
 
   private normalizePlatformInput(input: TuiAgentStartInput): TuiAgentStartInput {

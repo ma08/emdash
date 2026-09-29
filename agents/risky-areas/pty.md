@@ -32,6 +32,10 @@
   activity timestamps: under an idle policy, a session whose PTY client is gone counts as busy
   while zellij lists it running. Teardown of a zellij-backed TUI session runs under the launch
   mutex because cleanup finds sessions by listing
+- zellij namespace: sessions are listed in the host's zellij namespace, so a zellij launch keeps
+  the host's `ZELLIJ_SOCKET_DIR` over a project override (`pinZellijNamespace`). A project that
+  overrides `XDG_RUNTIME_DIR` or `TMPDIR` still moves the socket directory, as `TMUX_TMPDIR` does
+  for tmux; such sessions are not found by reconcile or cleanup
 - provider-specific resume/session behavior
 - env passthrough safety
 

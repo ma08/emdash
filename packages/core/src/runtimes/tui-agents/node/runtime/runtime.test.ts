@@ -1388,6 +1388,51 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     }
   );
 
+  it('reconciles zellij intents without consulting tmux', async () => {
+    const intents = createMemorySessionIntentStore();
+    await intents.saveActive({
+      conversationId: 'conversation-1',
+      sessionId: 'provider-session',
+      payload: startInput({ sessionId: 'provider-session', zellij }),
+    });
+    const exec = vi.fn((command: string, _args?: string[]) =>
+      command === 'tmux'
+        ? Promise.reject({ exitCode: 1, stderr: 'permission denied' })
+        : Promise.resolve({ stdout: `${SESSION} [Created 2h 3m ago]\n`, stderr: '' })
+    );
+    const { runtime, spawner } = createRuntime({ intents, exec: { exec } });
+
+    await runtime.reconcile();
+
+    expect(exec).not.toHaveBeenCalledWith('tmux', expect.anything());
+    expect(spawner.specs).toHaveLength(1);
+    expect(JSON.stringify(spawner.specs[0]!.invocation)).toContain(SESSION);
+  });
+
+  it('keeps zellij launches in the namespace the host lists', async () => {
+    const hostEnv = { PATH: '/bin', SHELL: '/bin/bash', ZELLIJ_SOCKET_DIR: '/host/sockets' };
+    const pinned = createRuntime({ userEnv: hostEnv });
+    await pinned.runtime.startSession(
+      startInput({ zellij, providerVars: { ZELLIJ_SOCKET_DIR: '/project/sockets', KEEP: '1' } })
+    );
+    expect(pinned.spawner.specs[0]!.env).toMatchObject({
+      ZELLIJ_SOCKET_DIR: '/host/sockets',
+      KEEP: '1',
+    });
+
+    const defaulted = createRuntime();
+    await defaulted.runtime.startSession(
+      startInput({ zellij, providerVars: { ZELLIJ_SOCKET_DIR: '/project/sockets' } })
+    );
+    expect(defaulted.spawner.specs[0]!.env).not.toHaveProperty('ZELLIJ_SOCKET_DIR');
+
+    const plain = createRuntime({ userEnv: hostEnv });
+    await plain.runtime.startSession(
+      startInput({ providerVars: { ZELLIJ_SOCKET_DIR: '/project/sockets' } })
+    );
+    expect(plain.spawner.specs[0]!.env).toMatchObject({ ZELLIJ_SOCKET_DIR: '/project/sockets' });
+  });
+
   it('ignores suspended zellij intents when deciding whether to list zellij', async () => {
     const tmuxIdentity = 'project:task:conversation-1';
     const intents = createMemorySessionIntentStore();
