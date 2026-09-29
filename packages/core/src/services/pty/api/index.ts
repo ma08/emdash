@@ -51,5 +51,27 @@ export {
   tmuxIdentityActivityKey,
   type ResolvedTmuxSession,
 } from './tmux';
+export {
+  buildZellijAttachScript,
+  buildZellijShellLine,
+  killZellijSession,
+  listZellijSessions,
+  parseZellijSessionInventory,
+  type ZellijSessionInventoryEntry,
+  type ZellijShellOptions,
+} from './zellij-commands';
+export {
+  makeZellijSessionName,
+  ZELLIJ_NAME_MAX_LENGTH,
+  zellijIdentityHash,
+  zellijSessionBelongsTo,
+  zellijSessionLabel,
+} from './zellij-identity';
+export {
+  findZellijSessionNamesByIdentity,
+  resolveZellijSession,
+  runningZellijSessionFor,
+  type ResolvedZellijSession,
+} from './zellij';
 export { buildTerminalEnv } from './terminal-env';
 export type { PtyDimensions, PtyExitInfo, PtyProcess, PtySpawner, PtySpawnSpec } from './types';

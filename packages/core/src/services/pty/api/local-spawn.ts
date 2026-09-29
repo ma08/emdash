@@ -7,6 +7,7 @@ import {
 } from '#primitives/exec/api';
 import { planExecutableLaunch, planShellLaunch, type FileExists } from '#primitives/exec/node';
 import { buildTmuxShellLine } from './tmux-commands';
+import { buildZellijShellLine } from './zellij-commands';
 
 export type ResolvedPtyShellProfile = {
   id: string;
@@ -29,6 +30,7 @@ export type PtySpawnIntent =
       shellProfile?: ResolvedPtyShellProfile;
       shellSetup?: string;
       tmux?: { name: string; identity?: string };
+      zellij?: { name: string };
     }
   | {
       kind: 'run-command';
@@ -37,9 +39,10 @@ export type PtySpawnIntent =
       shellProfile?: ResolvedPtyShellProfile;
       shellSetup?: string;
       tmux?: { name: string; identity?: string };
+      zellij?: { name: string };
     };
 
-export type LocalPtySpawnWarning = 'tmux_unsupported_on_windows';
+export type LocalPtySpawnWarning = 'tmux_unsupported_on_windows' | 'zellij_unsupported_on_windows';
 
 export type ResolvedLocalPtySpawn = {
   invocation: NativeInvocation;
@@ -108,7 +111,27 @@ function wrapCmdExeCommandLine(commandLine: string): string {
 function windowsWarnings(intent: PtySpawnIntent): LocalPtySpawnWarning[] {
   const warnings: LocalPtySpawnWarning[] = [];
   if (intent.tmux) warnings.push('tmux_unsupported_on_windows');
+  if (intent.zellij) warnings.push('zellij_unsupported_on_windows');
   return warnings;
+}
+
+/**
+ * The zellij pane runs the command through the resolved shell, so no extra
+ * `/bin/sh` hop sits between the multiplexer and a TUI agent. tmux takes
+ * precedence should an intent name both.
+ */
+function zellijShellLine(
+  intent: PtySpawnIntent,
+  name: string,
+  commandLine: string,
+  shell: string,
+  commandArgs: readonly string[]
+): string {
+  return buildZellijShellLine(name, commandLine, intent.cwd, {
+    shell,
+    shellArgs: commandArgs,
+    outerShellFamily: intent.shellProfile?.family === 'csh' ? 'csh' : 'posix',
+  });
 }
 
 function combineShellSetup(
@@ -259,6 +282,20 @@ function resolvePosixSpawn(
       };
     }
 
+    if (intent.zellij) {
+      const commandLine = intent.shellSetup
+        ? `${intent.shellSetup} && exec ${quoteArg(shell, 'posix')} ${interactiveArgs.join(' ')}`
+        : `exec ${quoteArg(shell, 'posix')} ${interactiveArgs.join(' ')}`;
+      return {
+        invocation: argvInvocation(shell, [
+          ...(intent.shellSetup ? setupWrapperArgs : commandArgs),
+          zellijShellLine(intent, intent.zellij.name, commandLine, shell, commandArgs),
+        ]),
+        cwd: intent.cwd,
+        warnings: [],
+      };
+    }
+
     if (intent.shellSetup) {
       return {
         invocation: argvInvocation(shell, [
@@ -287,7 +324,7 @@ function resolvePosixSpawn(
     );
   }
 
-  if (intent.command.kind === 'argv' && !intent.shellSetup && !intent.tmux) {
+  if (intent.command.kind === 'argv' && !intent.shellSetup && !intent.tmux && !intent.zellij) {
     const plan = planExecutableLaunch({
       platform,
       command: intent.command.command,
@@ -311,6 +348,17 @@ function resolvePosixSpawn(
       invocation: argvInvocation(shell, [
         ...commandArgs,
         buildTmuxShellLine(intent.tmux.name, fullCommandLine, intent.tmux.identity),
+      ]),
+      cwd: intent.cwd,
+      warnings: [],
+    };
+  }
+
+  if (intent.zellij) {
+    return {
+      invocation: argvInvocation(shell, [
+        ...commandArgs,
+        zellijShellLine(intent, intent.zellij.name, fullCommandLine, shell, commandArgs),
       ]),
       cwd: intent.cwd,
       warnings: [],

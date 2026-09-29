@@ -85,6 +85,11 @@
       "types": "./dist/primitives-terminal-shell-api.d.mts",
       "default": "./dist/primitives-terminal-shell-api.mjs"
     },
+    "./primitives/session-multiplexer/api": {
+      "development": "./src/primitives/session-multiplexer/api/index.ts",
+      "types": "./dist/primitives-session-multiplexer-api.d.mts",
+      "default": "./dist/primitives-session-multiplexer-api.mjs"
+    },
     "./primitives/kv/node": {
       "development": "./src/primitives/kv/node/index.ts",
       "types": "./dist/primitives-kv-node.d.mts",
