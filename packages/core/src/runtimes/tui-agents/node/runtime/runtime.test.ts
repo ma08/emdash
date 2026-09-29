@@ -1037,6 +1037,22 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     });
   });
 
+  it('reports an unreadable host environment as a failed spawn', async () => {
+    const { runtime, spawner } = createRuntime();
+    const deps = (runtime as unknown as { deps: { env: () => Promise<NodeJS.ProcessEnv> } }).deps;
+    deps.env = () => Promise.reject(new Error('shell environment unavailable'));
+
+    await expect(runtime.startSession(startInput({ zellij }))).resolves.toMatchObject({
+      success: false,
+      error: { type: 'spawn-failed', message: expect.stringContaining('unavailable') },
+    });
+
+    expect(spawner.specs).toHaveLength(0);
+    expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toMatchObject({
+      'conversation-1': { status: 'exited', exit: { signal: 'spawn-failed' } },
+    });
+  });
+
   it('keeps the stopped state when a cancelled launch then fails to list zellij', async () => {
     let failListing: (() => void) | undefined;
     const exec = vi.fn((command: string, _args?: string[]) =>

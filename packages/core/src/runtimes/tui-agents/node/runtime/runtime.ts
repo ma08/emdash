@@ -598,19 +598,18 @@ export class TuiAgentsRuntime {
       ),
       config.input.gitCredentials
     );
-    const env = zellijIdentityOf(config.input)
-      ? pinZellijNamespace(launchEnv, await this.deps.env())
-      : launchEnv;
-    if (!this.isCurrentGeneration(config.input.conversationId, generation)) {
-      return this.cancelledSpawn(config.input.conversationId);
-    }
+    let env = launchEnv;
     let spawnSpec: Pick<PtySpawnSpec, 'invocation'>;
     try {
+      if (zellijIdentityOf(config.input)) {
+        env = pinZellijNamespace(launchEnv, await this.deps.env());
+      }
       spawnSpec = await this.spawnSpec(command, config.input, env);
     } catch (error) {
-      // Resolving a zellij session lists sessions under a timeout; report a
-      // failed listing as a failed spawn instead of leaving the session in
-      // 'starting'. Other launches keep propagating, as before.
+      // Preparing a zellij launch reads the host environment and lists
+      // sessions under a timeout; report a failure of either as a failed
+      // spawn instead of leaving the session in 'starting'. Other launches
+      // keep propagating, as before.
       if (!zellijIdentityOf(config.input)) throw error;
       if (!this.isCurrentGeneration(config.input.conversationId, generation)) {
         return this.cancelledSpawn(config.input.conversationId);
