@@ -82,6 +82,7 @@ describe('TaskSessionLaunchContextResolver', () => {
         client: vi.fn(async () => ok({ workspaceRegistry: { getProjectConfig } } as never)),
       },
       workspaceIdentity: { resolve: vi.fn(async () => identity) },
+      hostProtocol: { agreedMinor: vi.fn(async () => null) },
     });
     const source = resolver.bind({
       projectId: 'project-1',
@@ -213,11 +214,11 @@ describe('TaskSessionLaunchContextResolver', () => {
       resolver.resolve({ projectId: 'project-1', taskId: 'task-1' })
     ).resolves.toMatchObject({ success: true, data: { multiplexer: 'zellij' } });
 
-    // An unknown protocol level does not gate.
+    // An unknown level is treated like an old server: tmux is always understood.
     agreedMinor.mockResolvedValue(null);
     await expect(
       resolver.resolve({ projectId: 'project-1', taskId: 'task-1' })
-    ).resolves.toMatchObject({ success: true, data: { multiplexer: 'zellij' } });
+    ).resolves.toMatchObject({ success: true, data: { tmux: true, multiplexer: 'tmux' } });
   });
 
   it('does not let a task-bound source silently follow a replacement workspace', async () => {
@@ -236,6 +237,7 @@ describe('TaskSessionLaunchContextResolver', () => {
       projects: { requireAttached },
       runtimes: { client: vi.fn() },
       workspaceIdentity: { resolve: vi.fn() },
+      hostProtocol: { agreedMinor: vi.fn() },
     });
     const source = resolver.bind({
       projectId: 'project-1',

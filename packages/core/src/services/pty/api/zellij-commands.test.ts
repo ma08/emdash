@@ -225,11 +225,11 @@ describe('killZellijSession', () => {
 
     await killZellijSession(stubExecContext(exec), 'my-task-0123456789', onError);
 
-    expect(exec).toHaveBeenCalledWith('zellij', [
-      'delete-session',
-      '--force',
-      'my-task-0123456789',
-    ]);
+    expect(exec).toHaveBeenCalledWith(
+      'zellij',
+      ['delete-session', '--force', 'my-task-0123456789'],
+      { timeout: 10_000 }
+    );
     expect(onError).not.toHaveBeenCalled();
   });
 

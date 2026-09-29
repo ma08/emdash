@@ -1018,6 +1018,25 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     expect(exec.exec).not.toHaveBeenCalledWith('zellij', expect.anything(), expect.anything());
   });
 
+  it('reports a failed zellij listing as a failed spawn', async () => {
+    const exec = vi.fn((command: string, _args?: string[]) =>
+      command === 'zellij'
+        ? Promise.reject({ exitCode: 2, stderr: 'permission denied' })
+        : Promise.resolve({ stdout: '', stderr: '' })
+    );
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    await expect(runtime.startSession(startInput({ zellij }))).resolves.toMatchObject({
+      success: false,
+      error: { type: 'spawn-failed', conversationId: 'conversation-1' },
+    });
+
+    expect(spawner.specs).toHaveLength(0);
+    expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toMatchObject({
+      'conversation-1': { status: 'exited' },
+    });
+  });
+
   it('removes the zellij intent on Windows', async () => {
     const { runtime, spawner, exec } = createRuntime({ platform: 'win32' });
 
@@ -1060,17 +1079,25 @@ describe('TuiAgentsRuntime zellij sessions', () => {
 
     expect(spawner.processes[0]!.killCount).toBeGreaterThan(0);
     await vi.waitFor(() => {
-      expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', renamed]);
-      expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', remnant]);
+      expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', renamed], {
+        timeout: 10_000,
+      });
+      expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', remnant], {
+        timeout: 10_000,
+      });
     });
-    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', unrelated]);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', unrelated], {
+      timeout: 10_000,
+    });
     expect(exec).not.toHaveBeenCalledWith('tmux', expect.anything());
 
     await runtime.startSession(startInput({ zellij }));
     exec.mockClear();
     await runtime.deleteSession('conversation-1');
 
-    expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', renamed]);
+    expect(exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', renamed], {
+      timeout: 10_000,
+    });
     expectNoSessionResidue('conversation-1', leakContainers(runtime));
   });
 
@@ -1107,7 +1134,9 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     await stopped;
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION]);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION], {
+      timeout: 10_000,
+    });
     expect(spawner.specs).toHaveLength(2);
   });
 
@@ -1163,7 +1192,9 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     await clock.advanceBy(2_400);
 
     expect(zellijListCalls(exec)).toBe(1);
-    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION]);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION], {
+      timeout: 10_000,
+    });
   });
 
   it('keeps a detached zellij session alive while zellij still runs it', async () => {
@@ -1181,7 +1212,9 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     await clock.advanceBy(2_400);
 
     expect(zellijListCalls(exec)).toBeGreaterThan(1);
-    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION]);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION], {
+      timeout: 10_000,
+    });
     expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
       'conversation-1'
     );
@@ -1215,7 +1248,9 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     spawner.processes[1]!.emitExit({ exitCode: 0, signal: null });
     await clock.advanceBy(2_400);
 
-    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION]);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION], {
+      timeout: 10_000,
+    });
     expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
       'conversation-1'
     );
@@ -1242,7 +1277,9 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     spawner.processes[0]!.emitExit({ exitCode: 0, signal: null });
     await clock.advanceBy(2_400);
 
-    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION]);
+    expect(exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', SESSION], {
+      timeout: 10_000,
+    });
     expect(peek(runtime.sessionsLiveModel.get(undefined)!.states.list)).toHaveProperty(
       'conversation-1'
     );

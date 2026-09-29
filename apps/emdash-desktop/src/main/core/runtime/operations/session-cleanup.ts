@@ -167,6 +167,12 @@ export async function killLifecycleTerminalSessions(
     // may have changed since a session was created, so both kinds are cleaned up.
     await projectTerminals.killZellijSessions({
       sessionIdentities: targets.tmuxSessionIdentities,
+      workspace: context.workspacePath
+        ? hostFileRefFromNativePath(
+            context.workspacePath,
+            sshConnectionIdOf(parseHostRef(operation.hostRef))
+          )
+        : undefined,
     });
   } catch {
     // A workspace-server that predates zellij support has no such procedure;

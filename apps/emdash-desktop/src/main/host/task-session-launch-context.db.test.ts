@@ -87,6 +87,7 @@ it.each(['claude', 'codex'] as const)(
         projects,
         runtimes,
         workspaceIdentity,
+        hostProtocol: { agreedMinor: async () => null },
       });
       const controller = createConversationsWireController({
         terminalFileSources: { prepare: vi.fn() },

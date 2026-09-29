@@ -42,9 +42,8 @@ export type TaskSessionLaunchContextSource = Readonly<{
 }>;
 
 /**
- * Negotiated workspace-server protocol for a host. `null` means no protocol
- * applies (the local host runs the current code in-process) or it is unknown,
- * in which case the caller does not gate.
+ * Negotiated workspace-server protocol minor for a remote host, read from a
+ * usable connection. `null` means the level could not be determined.
  */
 export type HostProtocolSource = Readonly<{
   agreedMinor(host: WorkspaceIdentity['host']): Promise<number | null>;
@@ -57,7 +56,7 @@ export class TaskSessionLaunchContextResolver {
       projects: Pick<ProjectAttachmentManager, 'requireAttached'>;
       runtimes: Pick<RuntimeBroker, 'client'>;
       workspaceIdentity: Pick<WorkspaceIdentityService, 'resolve'>;
-      hostProtocol?: HostProtocolSource;
+      hostProtocol: HostProtocolSource;
     }>
   ) {}
 
@@ -148,24 +147,21 @@ export class TaskSessionLaunchContextResolver {
    * zellij is an additive protocol feature (minor `ZELLIJ_PROTOCOL_MINOR`).
    * A remote host whose workspace-server negotiated an older minor would
    * strip the zellij fields and run the session without persistence, so such
-   * a host falls back to tmux and says so in the log. The local host runs the
-   * current runtimes in-process and is never gated.
+   * a host falls back to tmux and says so in the log. A level that cannot be
+   * determined is treated the same way: every server understands tmux. The
+   * local host runs the current runtimes in-process and is never gated.
    */
   private async resolveSessionMultiplexer(
     identity: WorkspaceIdentity,
     requested: SessionMultiplexer
   ): Promise<SessionMultiplexer> {
-    if (
-      requested !== 'zellij' ||
-      identity.host.type === 'local' ||
-      !this.dependencies.hostProtocol
-    ) {
-      return requested;
-    }
+    if (requested !== 'zellij' || identity.host.type === 'local') return requested;
     const agreedMinor = await this.dependencies.hostProtocol.agreedMinor(identity.host);
-    if (agreedMinor === null || agreedMinor >= ZELLIJ_PROTOCOL_MINOR) return requested;
+    if (agreedMinor !== null && agreedMinor >= ZELLIJ_PROTOCOL_MINOR) return requested;
     log.warn(
-      'TaskSessionLaunchContext: host workspace-server predates zellij support; using tmux',
+      agreedMinor === null
+        ? 'TaskSessionLaunchContext: host protocol level is unknown; using tmux instead of zellij'
+        : 'TaskSessionLaunchContext: host workspace-server predates zellij support; using tmux',
       {
         host: identity.host.id,
         agreedMinor,

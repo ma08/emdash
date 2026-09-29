@@ -314,14 +314,20 @@ export class TerminalsRuntime {
   /**
    * Best-effort cleanup for sessions this runtime may no longer track. zellij
    * names carry the identity hash, so discovery is the only lookup needed.
+   * Agent sessions use the identity as given; terminals started by this
+   * runtime use it scoped to their workspace, so both forms are matched.
    */
   async killZellijSessions(
     input: KillZellijSessionsInput
   ): Promise<Result<void, TerminalRuntimeError>> {
     if (process.platform === 'win32') return ok(undefined);
+    const { workspace } = input;
+    const identities = workspace
+      ? input.sessionIdentities.flatMap((id) => [id, sessionKeyFor({ workspace, id })])
+      : input.sessionIdentities;
     await this.withExecutionContext(async (exec) => {
       try {
-        const discovered = await findZellijSessionNamesByIdentity(exec, input.sessionIdentities);
+        const discovered = await findZellijSessionNamesByIdentity(exec, identities);
         for (const names of discovered.values()) {
           for (const name of names) await killZellijSession(exec, name);
         }

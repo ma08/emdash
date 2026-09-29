@@ -594,7 +594,18 @@ export class TuiAgentsRuntime {
       ),
       config.input.gitCredentials
     );
-    const spawnSpec = await this.spawnSpec(command, config.input, env);
+    let spawnSpec: Pick<PtySpawnSpec, 'invocation'>;
+    try {
+      spawnSpec = await this.spawnSpec(command, config.input, env);
+    } catch (error) {
+      // Resolving a zellij session lists sessions under a timeout; report a
+      // failed listing as a failed spawn instead of leaving the session in
+      // 'starting'. Other launches keep propagating, as before.
+      if (!zellijIdentityOf(config.input)) throw error;
+      const message = String(error);
+      this.markSpawnFailed(config, resumeState, startedAt, message);
+      return err({ type: 'spawn-failed', conversationId: config.input.conversationId, message });
+    }
     if (!this.isCurrentGeneration(config.input.conversationId, generation)) {
       return this.cancelledSpawn(config.input.conversationId);
     }

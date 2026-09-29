@@ -4,8 +4,11 @@ import { zellijSessionLabel } from './zellij-identity';
 
 /** Matches `TMUX_HISTORY_LIMIT`; zellij's default is 10 000 lines. */
 const ZELLIJ_SCROLL_BUFFER_SIZE = 100_000;
-/** `list-sessions` probes every session socket; a wedged session must not stall callers. */
-const ZELLIJ_LIST_TIMEOUT_MS = 10_000;
+/**
+ * `list-sessions` probes every session socket and `delete-session` talks to
+ * the session's server; a wedged session must not stall callers.
+ */
+const ZELLIJ_EXEC_TIMEOUT_MS = 10_000;
 
 export type ZellijSessionInventoryEntry = {
   name: string;
@@ -57,7 +60,9 @@ function posix(value: string): string {
  *   process; `--on-force-close detach` keeps it alive when the PTY client
  *   goes away.
  * - Otherwise a fresh session is created in the foreground from a temporary
- *   KDL layout, so the pane inherits the real terminal size. An `(EXITED)`
+ *   KDL layout, so the pane inherits the real terminal size. The layout holds
+ *   the command line, so it is written only when a session is created and
+ *   removed when the client exits. An `(EXITED)`
  *   remnant under the same name is deleted first: resurrecting it would
  *   re-run its stale command line, and the caller's current command (with its
  *   resume arguments) must win. A remnant that survives deletion aborts the
@@ -89,16 +94,15 @@ export function buildZellijAttachScript(
     'set -eu',
     'if ! command -v zellij >/dev/null 2>&1; then echo "Emdash: zellij is not installed or not on PATH" >&2; exit 127; fi',
     `session=${posix(sessionName)}`,
-    'tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/emdash-zellij.XXXXXX")',
-    'layout_file="$tmpdir/layout.kdl"',
-    'cleanup() { delay="${EMDASH_ZELLIJ_LAYOUT_CLEANUP_DELAY_SECONDS:-30}"; case "$delay" in \'\' | *[!0-9]*) delay=30 ;; esac; if [ "$delay" = "0" ]; then rm -rf "$tmpdir"; else nohup /bin/sh -c \'sleep "$1"; rm -rf "$2"\' sh "$delay" "$tmpdir" >/dev/null 2>&1 & fi; }',
+    'tmpdir=""',
+    'cleanup() { if [ -z "$tmpdir" ]; then return 0; fi; delay="${EMDASH_ZELLIJ_LAYOUT_CLEANUP_DELAY_SECONDS:-30}"; case "$delay" in \'\' | *[!0-9]*) delay=30 ;; esac; if [ "$delay" = "0" ]; then rm -rf "$tmpdir"; else nohup /bin/sh -c \'sleep "$1"; rm -rf "$2"\' sh "$delay" "$tmpdir" >/dev/null 2>&1 & fi; }',
     'finish() { finish_status=$?; trap - EXIT HUP INT TERM; cleanup; exit "$finish_status"; }',
     'trap finish EXIT HUP INT TERM',
-    `printf '%s\\n' ${layoutLines.map(posix).join(' ')} > "$layout_file"`,
+    `write_layout() { tmpdir=$(mktemp -d "\${TMPDIR:-/tmp}/emdash-zellij.XXXXXX"); layout_file="$tmpdir/layout.kdl"; printf '%s\\n' ${layoutLines.map(posix).join(' ')} > "$layout_file"; }`,
     // Session names are whitespace-free; --no-formatting keeps the EXITED marker parseable.
     'session_state() { { zellij list-sessions --no-formatting 2>/dev/null || true; } | awk -v session="$session" \'$1 == session { print (index($0, "(EXITED") > 0 ? "exited" : "active"); exit }\'; }',
     'attach_session() { zellij attach "$session" options --on-force-close detach; }',
-    `create_session() { if [ "$(session_state)" = "exited" ]; then zellij delete-session "$session" >/dev/null 2>&1 || true; if [ "$(session_state)" = "exited" ]; then echo "Emdash: could not delete the stale zellij session $session" >&2; exit 1; fi; fi; if zellij attach --create "$session" options --default-layout "$layout_file" --scroll-buffer-size ${ZELLIJ_SCROLL_BUFFER_SIZE} --on-force-close detach; then return 0; else create_status=$?; fi; if [ "$(session_state)" = "active" ]; then attach_session; else exit "$create_status"; fi; }`,
+    `create_session() { if [ "$(session_state)" = "exited" ]; then zellij delete-session "$session" >/dev/null 2>&1 || true; if [ "$(session_state)" = "exited" ]; then echo "Emdash: could not delete the stale zellij session $session" >&2; exit 1; fi; fi; write_layout; if zellij attach --create "$session" options --default-layout "$layout_file" --scroll-buffer-size ${ZELLIJ_SCROLL_BUFFER_SIZE} --on-force-close detach; then return 0; else create_status=$?; fi; if [ "$(session_state)" = "active" ]; then attach_session; else exit "$create_status"; fi; }`,
     'if [ "$(session_state)" = "active" ]; then if attach_session; then :; else attach_status=$?; if [ "$(session_state)" = "active" ]; then exit "$attach_status"; fi; create_session; fi; else create_session; fi',
   ].join('; ');
 }
@@ -123,7 +127,7 @@ export async function listZellijSessions(
 ): Promise<ZellijSessionInventoryEntry[]> {
   try {
     const result = await ctx.exec('zellij', ['list-sessions', '--no-formatting'], {
-      timeout: ZELLIJ_LIST_TIMEOUT_MS,
+      timeout: ZELLIJ_EXEC_TIMEOUT_MS,
     });
     return parseZellijSessionInventory(result.stdout);
   } catch (error) {
@@ -139,7 +143,9 @@ export async function killZellijSession(
   onError?: (error: unknown) => void
 ): Promise<void> {
   try {
-    await ctx.exec('zellij', ['delete-session', '--force', sessionName]);
+    await ctx.exec('zellij', ['delete-session', '--force', sessionName], {
+      timeout: ZELLIJ_EXEC_TIMEOUT_MS,
+    });
   } catch (error) {
     // zellij reports "not found" for a session that is already gone, and 0.44
     // does so even after force-deleting a running one.

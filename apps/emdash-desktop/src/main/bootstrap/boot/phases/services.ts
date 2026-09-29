@@ -333,12 +333,11 @@ export async function bootServices(
     workspaceIdentity,
     hostProtocol: {
       agreedMinor: async (host) => {
-        if (isLocalHostRef(host)) return null;
         try {
-          const connection = await infrastructure.hosts
-            .get(host)
-            ?.runtime.client({ waitForReady: false });
-          return connection?.currentHandshake()?.agreedMinor ?? null;
+          // `ready()` waits for a usable connection, so the level is only
+          // unknown when the host cannot be reached at all.
+          const connection = await infrastructure.hosts.get(host)?.runtime.client();
+          return (await connection?.ready())?.agreedMinor ?? null;
         } catch {
           return null;
         }

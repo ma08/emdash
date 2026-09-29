@@ -14,8 +14,12 @@ export const hostSettingsSchema = z.object({
   worktreeRoot: z.string().optional(),
   /** Default persistent-session preference for terminal sessions on this host. */
   tmux: z.boolean().optional(),
-  /** Multiplexer that backs persistent sessions on this host; unset means tmux. */
-  multiplexer: z.enum(SESSION_MULTIPLEXERS).optional(),
+  /**
+   * Multiplexer that backs persistent sessions on this host; unset means tmux.
+   * A value this version does not know reads as unset, so a file written by a
+   * newer version keeps its other settings.
+   */
+  multiplexer: z.enum(SESSION_MULTIPLEXERS).optional().catch(undefined),
   /**
    * File-watcher exclude globs applied at files-worker spawn (restart-applied).
    * Unset means "use the code-level defaults" (DEFAULT_WATCHER_EXCLUDE); an

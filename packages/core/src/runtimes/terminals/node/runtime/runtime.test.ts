@@ -671,13 +671,17 @@ describe('TerminalsRuntime', () => {
       await runtime.start({ key, spec: { cwd: '/repo', env: {}, zellij: true } });
       await runtime.kill(key);
 
-      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', running]);
-      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', remnant]);
-      expect(exec.exec).not.toHaveBeenCalledWith('zellij', [
-        'delete-session',
-        '--force',
-        'scratch',
-      ]);
+      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', running], {
+        timeout: 10_000,
+      });
+      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', remnant], {
+        timeout: 10_000,
+      });
+      expect(exec.exec).not.toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', 'scratch'],
+        { timeout: 10_000 }
+      );
       expect(exec.exec).not.toHaveBeenCalledWith('tmux', expect.anything());
       expectNoSessionResidue(sessionKey, leakContainers(runtime));
 
@@ -710,13 +714,72 @@ describe('TerminalsRuntime', () => {
       await expect(
         runtime.killZellijSessions({ sessionIdentities: ['session-1'] })
       ).resolves.toEqual({ success: true, data: undefined });
-      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', wanted]);
-      expect(exec.exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', other]);
+      expect(exec.exec).toHaveBeenCalledWith('zellij', ['delete-session', '--force', wanted], {
+        timeout: 10_000,
+      });
+      expect(exec.exec).not.toHaveBeenCalledWith('zellij', ['delete-session', '--force', other], {
+        timeout: 10_000,
+      });
 
       exec.exec.mockRejectedValue({ exitCode: 2, stderr: 'permission denied' });
       await expect(
         runtime.killZellijSessions({ sessionIdentities: ['session-1'] })
       ).resolves.toEqual({ success: true, data: undefined });
+      await scope.dispose();
+    }
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'killZellijSessions also matches terminals, whose identity is scoped to the workspace',
+    async () => {
+      const workspace = testWorkspace();
+      const key = { workspace, id: 'project-1:task-1:terminal-1' };
+      const exec = fakeExec();
+      const spawner = new FakePtySpawner();
+      const scope = createScope({ label: 'test-terminals-zellij-untracked' });
+      const runtime = new TerminalsRuntime({
+        spawner,
+        userEnv: async () => testUserEnv(),
+        exec,
+        scope,
+      });
+
+      // Learn the name the runtime gives this terminal's session.
+      await runtime.start({ key, spec: { cwd: '/repo', env: {}, zellij: true } });
+      const { invocation } = spawner.specs[0]!;
+      if (invocation.kind !== 'argv') throw new Error('Expected argv invocation');
+      const terminalSession = /session=([a-z0-9_-]+-[0-9a-f]{10});/u.exec(
+        invocation.argv.at(-1) ?? ''
+      )?.[1];
+      expect(terminalSession).toBeDefined();
+      const agentSession = makeZellijSessionName(key.id, 'repo');
+      expect(terminalSession).not.toBe(agentSession);
+
+      exec.exec.mockClear();
+      exec.exec.mockResolvedValue({
+        stdout: `${terminalSession} [Created 1m ago]\n${agentSession} [Created 1m ago]\n`,
+        stderr: '',
+      });
+
+      // Without the workspace only the identity as given is matched.
+      await runtime.killZellijSessions({ sessionIdentities: [key.id] });
+      expect(exec.exec).toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', agentSession],
+        { timeout: 10_000 }
+      );
+      expect(exec.exec).not.toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', terminalSession],
+        { timeout: 10_000 }
+      );
+
+      await runtime.killZellijSessions({ sessionIdentities: [key.id], workspace });
+      expect(exec.exec).toHaveBeenCalledWith(
+        'zellij',
+        ['delete-session', '--force', terminalSession],
+        { timeout: 10_000 }
+      );
       await scope.dispose();
     }
   );

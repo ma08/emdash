@@ -148,6 +148,12 @@ export type KillTmuxSessionsInput = z.infer<typeof killTmuxSessionsInputSchema>;
 
 export const killZellijSessionsInputSchema = z.object({
   sessionIdentities: z.array(z.string().min(1)),
+  /**
+   * Workspace the identities may belong to as terminal ids. A terminal's
+   * session identity is scoped to its workspace, so with this set each
+   * identity is also matched in that form.
+   */
+  workspace: hostFileRefSchema.optional(),
 });
 
 export type KillZellijSessionsInput = z.infer<typeof killZellijSessionsInputSchema>;
