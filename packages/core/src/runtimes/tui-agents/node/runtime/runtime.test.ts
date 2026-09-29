@@ -1037,6 +1037,33 @@ describe('TuiAgentsRuntime zellij sessions', () => {
     });
   });
 
+  it('keeps the stopped state when a cancelled launch then fails to list zellij', async () => {
+    let failListing: (() => void) | undefined;
+    const exec = vi.fn((command: string, _args?: string[]) =>
+      command === 'zellij'
+        ? new Promise<{ stdout: string; stderr: string }>((_resolve, reject) => {
+            failListing = () => reject({ exitCode: 2, stderr: 'permission denied' });
+          })
+        : Promise.resolve({ stdout: '', stderr: '' })
+    );
+    const { runtime, spawner } = createRuntime({ exec: { exec } });
+
+    const launch = runtime.startSession(startInput({ zellij }));
+    await vi.waitFor(() => expect(failListing).toBeDefined());
+    const stopped = runtime.stopSession('conversation-1');
+    failListing?.();
+
+    await expect(launch).resolves.toMatchObject({
+      success: false,
+      error: { message: 'Launch was cancelled by a newer session operation' },
+    });
+    await stopped;
+    expect(spawner.specs).toHaveLength(0);
+    const state = peek(runtime.sessionsLiveModel.get(undefined)!.states.list)['conversation-1'];
+    expect(state).toMatchObject({ status: 'exited' });
+    expect(state?.exit).toBeUndefined();
+  });
+
   it('removes the zellij intent on Windows', async () => {
     const { runtime, spawner, exec } = createRuntime({ platform: 'win32' });
 

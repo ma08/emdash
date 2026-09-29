@@ -602,6 +602,9 @@ export class TuiAgentsRuntime {
       // failed listing as a failed spawn instead of leaving the session in
       // 'starting'. Other launches keep propagating, as before.
       if (!zellijIdentityOf(config.input)) throw error;
+      if (!this.isCurrentGeneration(config.input.conversationId, generation)) {
+        return this.cancelledSpawn(config.input.conversationId);
+      }
       const message = String(error);
       this.markSpawnFailed(config, resumeState, startedAt, message);
       return err({ type: 'spawn-failed', conversationId: config.input.conversationId, message });

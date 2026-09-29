@@ -99,6 +99,7 @@ import { startPeriodicSweep } from '@core/primitives/periodic-sweep/node/periodi
 import { DEFAULT_AGENT_GIT_CREDENTIALS } from '@core/primitives/project-settings/api';
 import type { HostReachabilityProbe } from '@core/primitives/ssh/api';
 import { AppDbKeyValueStore } from '@core/services/app-db/node/key-value-store';
+import { readAgreedProtocolMinor } from '@core/services/hosts/node/agreed-protocol-minor';
 import { createNotificationService } from '@core/services/notifications/node';
 import { LegacyAccountImports } from '@core/services/provider-accounts/node/migrations/legacy-account-imports';
 import { listProviderAccountSummaries } from '@core/services/provider-accounts/node/provider-account-service';
@@ -332,16 +333,7 @@ export async function bootServices(
     runtimes,
     workspaceIdentity,
     hostProtocol: {
-      agreedMinor: async (host) => {
-        try {
-          // `ready()` waits for a usable connection, so the level is only
-          // unknown when the host cannot be reached at all.
-          const connection = await infrastructure.hosts.get(host)?.runtime.client();
-          return (await connection?.ready())?.agreedMinor ?? null;
-        } catch {
-          return null;
-        }
-      },
+      agreedMinor: (host) => readAgreedProtocolMinor(infrastructure.hosts, host),
     },
   });
   const previewServerAccess = new PreviewServerAccessService({
