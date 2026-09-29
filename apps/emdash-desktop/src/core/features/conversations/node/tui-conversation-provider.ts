@@ -1,7 +1,6 @@
 import type { GitCredentialsSessionSpec } from '@emdash/core/primitives/git-credentials/api';
 import type { HostRef } from '@emdash/core/primitives/host/api';
 import type { TuiAgentStartInput } from '@emdash/core/runtimes/tui-agents/api';
-import { persistentSessionNames } from '@emdash/core/services/pty/api';
 import { and, eq } from 'drizzle-orm';
 import { conversationRegistryTable as conversations } from '@core/features/conversations/api/node/registry';
 import type {
@@ -20,6 +19,7 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const PROVIDER_SESSION_ID_REQUIRED_FOR_RESUME = new Set([
   'amp',
+  'antigravity',
   'codex',
   'commandcode',
   'droid',
@@ -89,7 +89,7 @@ export class TuiConversationProvider implements ConversationProvider {
     const agentSession = resolveAgentSession(conversation, mode);
     const result = agentSession.isResuming
       ? await this.tuiAgents.resume(input)
-      : await this.tuiAgents.start(input);
+      : await this.tuiAgents.startSession(input);
     if (!result.success) {
       throw new Error(`TUI session failed to start: ${JSON.stringify(result.error)}`);
     }
@@ -97,7 +97,7 @@ export class TuiConversationProvider implements ConversationProvider {
   }
 
   async detachSession(_conversationId: string): Promise<void> {
-    // Output subscriptions are passive; explicit control and idle cleanup own PTY lifetime.
+    // Output subscriptions are passive; explicit control and workspace teardown own PTY lifetime.
   }
 
   async stopSession(conversationId: string): Promise<void> {
@@ -153,12 +153,6 @@ export class TuiConversationProvider implements ConversationProvider {
       ...launchContext.data.env,
     };
     const sessionId = makePtySessionId(this.projectId, this.taskId, conversation.id);
-    const sessionNames = persistentSessionNames({
-      enabled: launchContext.data.tmux,
-      multiplexer: launchContext.data.multiplexer,
-      sessionId,
-      label: launchContext.data.taskName,
-    });
 
     return {
       conversationId: conversation.id,
@@ -178,8 +172,7 @@ export class TuiConversationProvider implements ConversationProvider {
       cols: initialSize.cols,
       rows: initialSize.rows,
       shellSetup: launchContext.data.shellSetup,
-      tmuxSessionName: sessionNames.tmuxSessionName,
-      zellijSessionName: sessionNames.zellijSessionName,
+      tmux: launchContext.data.tmux ? { identity: sessionId } : undefined,
     };
   }
 }
@@ -189,13 +182,12 @@ function resolveAgentSession(
   mode: 'start' | 'resume'
 ): { sessionId: string; isResuming: boolean } {
   const isResuming = mode === 'resume';
+  const nativeSessionId = conversation.sessionId;
+  const hasNativeSessionId = Boolean(nativeSessionId) && nativeSessionId !== conversation.id;
   if (PROVIDER_SESSION_ID_REQUIRED_FOR_RESUME.has(conversation.providerId) && isResuming) {
-    const nativeSessionId = conversation.sessionId;
-    if (nativeSessionId && nativeSessionId !== conversation.id) {
-      return { sessionId: nativeSessionId, isResuming: true };
-    }
+    if (hasNativeSessionId) return { sessionId: nativeSessionId!, isResuming: true };
     return { sessionId: conversation.id, isResuming: false };
   }
-
+  if (isResuming && hasNativeSessionId) return { sessionId: nativeSessionId!, isResuming };
   return { sessionId: conversation.id, isResuming };
 }

@@ -13,6 +13,5 @@ export function createTerminalsController(runtime: TerminalsRuntime) {
     resize: ({ key, cols, rows }) => runtime.resize(key, cols, rows),
     kill: ({ key }) => runtime.kill(key),
     killTmuxSessions: (input) => runtime.killTmuxSessions(input),
-    killZellijSessions: (input) => runtime.killZellijSessions(input),
   });
 }

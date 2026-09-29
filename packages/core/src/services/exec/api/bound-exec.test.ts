@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { chmod, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -72,6 +72,20 @@ describe('BoundExec', () => {
       file: 'git',
       args: ['rev-parse', '--not-a-real-flag'],
     });
+  });
+
+  it('preserves the operating-system error when an executable is missing', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'emdash-shared-exec-missing-'));
+    const file = path.join(cwd, 'missing-executable');
+    try {
+      await expect(createBoundExec({ file, cwd }).exec([])).rejects.toMatchObject({
+        name: 'ExecError',
+        exitCode: null,
+        cause: { code: 'ENOENT', path: file },
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('uses the configured executable path', async () => {
@@ -192,9 +206,12 @@ describe('BoundExec', () => {
       ],
       { maxBuffer: 128 }
     );
-    const pid = Number.parseInt(await waitForFile(pidPath), 10);
+    const [pidText] = await Promise.all([
+      waitForFile(pidPath),
+      expect(execution).rejects.toMatchObject({ stderr: 'stdout exceeded maxBuffer' }),
+    ]);
+    const pid = Number.parseInt(pidText, 10);
 
-    await expect(execution).rejects.toMatchObject({ stderr: 'stdout exceeded maxBuffer' });
     expect(isProcessAlive(pid)).toBe(false);
   });
 });

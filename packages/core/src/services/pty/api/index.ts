@@ -10,7 +10,6 @@ export {
   logLocalPtySpawnWarnings,
   resolveLocalPtySpawn,
   type LocalPtySpawnWarning,
-  type PtyCommandSpec,
   type PtySpawnIntent,
   type ResolvedLocalPtySpawn,
   type ResolvedPtyShellProfile,
@@ -33,33 +32,24 @@ export { PtySession } from './pty-session';
 export type { PtySessionOptions } from './pty-session';
 export {
   buildTmuxShellLine,
-  decodeTmuxSessionName,
   killTmuxSession,
-  listTmuxSessionActivity,
-  makeTmuxSessionName,
-  parseTmuxSessionActivity,
-  TMUX_SESSION_PREFIX,
-} from './tmux';
-export { persistentSessionNames, type PersistentSessionNames } from './multiplexer';
-export { buildTerminalEnv } from './terminal-env';
+  listTmuxSessions,
+  type TmuxSessionInventoryEntry,
+} from './tmux-commands';
 export {
-  activeZellijSessionFor,
-  buildZellijAttachScript,
-  buildZellijShellLine,
-  isZellijSessionForPtySessionId,
-  killZellijSession,
-  killZellijSessionsForPtySessionIds,
-  killZellijSessionsMatching,
-  listZellijSessions,
-  makeZellijSessionLabel,
-  makeZellijSessionName,
-  parseZellijSessionList,
-  parseZellijSessionName,
-  ZELLIJ_SESSION_NAME_MAX_LENGTH,
-  ZELLIJ_SESSION_PREFIX,
-  zellijSessionHash,
-  type ZellijSessionInfo,
-  type ZellijSessionNameParts,
-  type ZellijShellOptions,
-} from './zellij';
+  decodeLegacyTmuxSessionName,
+  LEGACY_TMUX_SESSION_PREFIX,
+  makeLegacyTmuxSessionName,
+  makeTmuxSessionName,
+  TMUX_IDENTITY_OPTION,
+} from './tmux-identity';
+export {
+  findTmuxSessionNamesByIdentity,
+  listTmuxSessionActivity,
+  parseTmuxSessionActivity,
+  resolveTmuxSession,
+  tmuxIdentityActivityKey,
+  type ResolvedTmuxSession,
+} from './tmux';
+export { buildTerminalEnv } from './terminal-env';
 export type { PtyDimensions, PtyExitInfo, PtyProcess, PtySpawner, PtySpawnSpec } from './types';

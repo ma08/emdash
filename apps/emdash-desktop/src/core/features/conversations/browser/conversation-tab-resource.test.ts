@@ -42,13 +42,13 @@ describe('ConversationTabResource activation', () => {
     resource.dispose();
   });
 
-  it('does not rehydrate an already active TUI conversation', () => {
+  it('checks the host even when a stale observation still says the session is active', () => {
     isSessionActive.mockReturnValue(true);
     const resource = new ConversationTabResource(tuiStore(), 'task-1', tabHandle());
 
     resource.onActivate();
 
-    expect(retryHydration).not.toHaveBeenCalled();
+    expect(retryHydration).toHaveBeenCalledWith('conversation-1');
     resource.dispose();
   });
 
@@ -60,6 +60,18 @@ describe('ConversationTabResource activation', () => {
 
     expect(retryHydration).not.toHaveBeenCalled();
     resource.dispose();
+  });
+
+  it('keeps cleanup separate from acknowledgement on user close', () => {
+    const store = tuiStore();
+    store.seen = false;
+    const resource = new ConversationTabResource(store, 'task-1', tabHandle());
+
+    resource.dispose();
+    expect(store.markSeen).not.toHaveBeenCalled();
+
+    resource.onClose();
+    expect(store.markSeen).toHaveBeenCalledOnce();
   });
 });
 

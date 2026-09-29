@@ -61,6 +61,9 @@ export class ConversationHydrationReconciler implements Disposable {
     if (this.disposed) return;
     const entry = this.entries.get(conversationId);
     if (!entry?.desired) return;
+    // Activation asks the host to check liveness again. A prior successful
+    // hydrate only records our attachment, not whether its process survives.
+    if (entry.state === 'running') entry.state = 'stopped';
     this.reconcile(conversationId, entry);
   }
 

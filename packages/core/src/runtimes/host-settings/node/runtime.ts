@@ -109,13 +109,7 @@ export class HostSettingsRuntime {
       } catch {
         // Missing or unparseable: start from empty.
       }
-      for (const key of [
-        'shellSetup',
-        'worktreeRoot',
-        'tmux',
-        'multiplexer',
-        'watcherExclude',
-      ] as const) {
+      for (const key of ['shellSetup', 'worktreeRoot', 'tmux', 'watcherExclude'] as const) {
         const value = input[key];
         if (value === undefined) continue;
         if (value === null) delete raw[key];

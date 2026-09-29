@@ -69,6 +69,7 @@ export const AGENT_ENV_VARS = [
   'KIMI_API_KEY',
   'KIMI_CODE_HOME',
   'KIRO_HOME',
+  'META_API_KEY',
   'MISTRAL_API_KEY',
   'MIMOCODE_HOME',
   'MOONSHOT_API_KEY',
@@ -85,6 +86,7 @@ export const AGENT_ENV_VARS = [
   'OPENCODE_CONFIG_DIR',
   'OPENROUTER_API_KEY',
   'OPENROUTER_BASE_URL',
+  'ORCAROUTER_API_KEY',
   'PI_CODING_AGENT_DIR',
   'PI_CONFIG_DIR',
   'PI_NO_TITLE',
@@ -139,11 +141,6 @@ const DISPLAY_ENV_VARS = [
   'XAUTHORITY',
   'WAYLAND_DISPLAY',
   'XDG_RUNTIME_DIR',
-  // zellij resolves its socket and config directories from these; the agent must
-  // land in the same namespace the runtime lists and deletes sessions in.
-  'ZELLIJ_CONFIG_DIR',
-  'ZELLIJ_CONFIG_FILE',
-  'ZELLIJ_SOCKET_DIR',
   'XDG_CURRENT_DESKTOP',
   'XDG_SESSION_TYPE',
   'DBUS_SESSION_BUS_ADDRESS',

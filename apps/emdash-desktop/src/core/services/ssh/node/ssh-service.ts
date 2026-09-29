@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { runWithTimeout } from '@emdash/shared/scheduling';
 import { eq } from 'drizzle-orm';
 import type {
   ConnectionState,
@@ -7,7 +8,12 @@ import type {
   SshConfig,
   SshService as SshServiceContract,
 } from '@core/primitives/ssh/api';
-import { SshConnectionNotFoundError } from '@core/primitives/ssh/api';
+import { SshConnectionNotFoundError, sshConfigFromRow } from '@core/primitives/ssh/api';
+import {
+  SshConnectionFailure,
+  type SshConnectionControl,
+  type SshConnectionLifecycle,
+} from '@core/primitives/ssh/api/node/connection-control';
 import type { AppDb } from '@core/services/app-db/node/db';
 import {
   sshConnections as sshConnectionsTable,
@@ -40,6 +46,44 @@ export interface SshServiceDeps {
 }
 
 export class SshService implements SshServiceContract {
+  private lifecycle: SshConnectionLifecycle | undefined;
+  bindLifecycle(lifecycle: SshConnectionLifecycle): void {
+    this.lifecycle = lifecycle;
+  }
+  readonly control: SshConnectionControl = {
+    readIntent: async (id) => (await this.loadConnectionRow(id)).shouldConnect !== 0,
+    writeIntent: (id, enabled) => this.updateShouldConnect(id, enabled),
+    establish: (id, signal) =>
+      runWithTimeout(
+        (inner) =>
+          this.deps.manager.createConnection(
+            id,
+            async () => {
+              try {
+                return await this.deps.resolveConnectConfig({
+                  kind: 'persisted',
+                  row: await this.loadConnectionRow(id),
+                });
+              } catch (cause) {
+                throw new SshConnectionFailure(
+                  'configuration',
+                  'Could not resolve SSH configuration',
+                  { cause }
+                );
+              }
+            },
+            { signal: inner }
+          ),
+        { signal, timeoutMs: 120_000 }
+      ),
+    reset: (id) => this.deps.manager.resetConnection(id),
+    probe: async (id, signal) => {
+      const proxy = this.deps.manager.getProxy(id);
+      if (!proxy?.isConnected) throw new SshConnectionFailure('transport', 'SSH is disconnected');
+      const result = await proxy.execScript('true', { signal, timeoutMs: 5_000 });
+      if (result.exitCode !== 0) throw new SshConnectionFailure('transport', 'SSH probe failed');
+    },
+  };
   private readonly createId: () => string;
   private readonly now: () => number;
 
@@ -81,7 +125,14 @@ export class SshService implements SshServiceContract {
       await this.deps.manager.createConnection(
         connectionId,
         async () => {
-          const resolved = await this.deps.resolveConnectConfig({ kind: 'transient', config });
+          const previous = config.id
+            ? sshConfigFromRow(await this.loadConnectionRow(config.id))
+            : undefined;
+          const resolved = await this.deps.resolveConnectConfig({
+            kind: 'transient',
+            config,
+            previous,
+          });
           debugLogs = resolved.debugLogs;
           const existingDebug = resolved.config.debug;
           return {
@@ -120,11 +171,13 @@ export class SshService implements SshServiceContract {
 
   /** Intentionally close a connection and stop auto-reconnect. */
   async disconnect(connectionId: string): Promise<void> {
-    await this.updateShouldConnect(connectionId, false);
+    if (this.lifecycle) return this.lifecycle.disconnect(connectionId);
     await this.dropConnection(connectionId);
+    await this.updateShouldConnect(connectionId, false);
   }
 
   async dropConnection(connectionId: string): Promise<void> {
+    if (this.lifecycle) return this.lifecycle.invalidate(connectionId);
     if (this.deps.manager.getConnectionState(connectionId) !== 'disconnected') {
       await this.deps.manager.dropConnection(connectionId);
     }
@@ -136,6 +189,7 @@ export class SshService implements SshServiceContract {
 
   /** Ensure a connection is established (no-op if already connected). */
   async connect(connectionId: string): Promise<ConnectionState> {
+    if (this.lifecycle) return this.lifecycle.connect(connectionId);
     await this.updateShouldConnect(connectionId, true);
     return await this.connectFromPersistedConfig(connectionId);
   }
@@ -145,6 +199,7 @@ export class SshService implements SshServiceContract {
    * Explicitly disconnected machines remain disconnected until a user connects again.
    */
   async ensureConnected(connectionId: string): Promise<ConnectionState> {
+    if (this.lifecycle) return this.lifecycle.ensureConnected(connectionId);
     const row = await this.loadConnectionRow(connectionId);
     if (row.shouldConnect === 0) return 'disconnected';
     return await this.connectFromPersistedConfig(connectionId);

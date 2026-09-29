@@ -2,6 +2,8 @@ import { defineConfig } from 'tsdown';
 
 export default defineConfig({
   entry: {
+    'services-attachments-node': 'src/services/attachments/node/local-attachment-store.ts',
+    'services-attachments-api': 'src/services/attachments/api/index.ts',
     'primitives-path-api': 'src/primitives/path/api/index.ts',
     'primitives-host-api': 'src/primitives/host/api/index.ts',
     'primitives-git-credentials-api': 'src/primitives/git-credentials/api/index.ts',
@@ -12,7 +14,6 @@ export default defineConfig({
     'primitives-host-dependencies-api': 'src/primitives/host-dependencies/api/index.ts',
     'primitives-kv-api': 'src/primitives/kv/api/index.ts',
     'primitives-terminal-shell-api': 'src/primitives/terminal-shell/api/index.ts',
-    'primitives-session-multiplexer-api': 'src/primitives/session-multiplexer/api/index.ts',
     'primitives-kv-node': 'src/primitives/kv/node/index.ts',
     'primitives-emdash-config-api': 'src/primitives/emdash-config/api/index.ts',
     'primitives-versioned-schema-api': 'src/primitives/versioned-schema/api/index.ts',

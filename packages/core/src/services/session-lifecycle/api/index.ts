@@ -8,7 +8,11 @@ import type {
   ReportSessionStartedInput,
 } from '#services/conversation-reports/api';
 import type { ConversationLifecycleReporter } from '#services/conversation-reports/node';
-import type { SessionIntent, SessionIntentStore } from '#services/session-intents/api';
+import type {
+  SessionIntent,
+  SessionIntentError,
+  SessionIntentStore,
+} from '#services/session-intents/api';
 
 export const idlePolicyConfigSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -27,10 +31,8 @@ export const idlePolicyConfigSchema = z.discriminatedUnion('kind', [
 export type IdlePolicyConfig = z.infer<typeof idlePolicyConfigSchema>;
 
 /**
- * Shared idle window for the agent session runtimes (acp, tui-agents): a session
- * with no output for an hour is idle and can be deactivated; resuming
- * re-materializes it. Both worker spawn specs bake this into their `idle-after`
- * lifecycle policy so the invariant is stated once.
+ * Default idle window for runtimes using idle-after (including ACP). Interactive
+ * TUI sessions opt out: silence does not mean their process can be discarded.
  */
 export const SESSION_IDLE_MS = 60 * 60_000;
 
@@ -63,13 +65,8 @@ export interface SessionSnapshotJudgment {
 }
 
 export interface ReconcileOptions<TResume, TCtx> {
-  /**
-   * Run-vetoing pre-scan over the listed active intents; a veto (or throw)
-   * aborts the whole reconcile.
-   */
-  precheck?: (
-    intents: readonly SessionIntent[]
-  ) => Promise<{ ctx: TCtx } | { veto: true; error?: unknown }>;
+  /** Run-vetoing pre-scan; a veto (or throw) aborts the whole reconcile. */
+  precheck?: () => Promise<{ ctx: TCtx } | { veto: true; error?: unknown }>;
   parse: (intent: SessionIntent, ctx: TCtx) => { input: TResume } | { suspend: string };
   gate?: (input: TResume) => { ok: true } | { suspend: string };
   resume: (input: TResume) => Promise<Result<unknown, unknown>>;
@@ -83,6 +80,13 @@ export interface ConversationOptions<TResume, TCtx> {
   reports?: ConversationLifecycleReporter;
   reconcile?: ReconcileOptions<TResume, TCtx>;
 }
+
+/** A proposed intent; publish its owner state only after the write succeeds. */
+export type SessionIntentUpdate = {
+  payload: Serializable;
+  sessionId?: string | null;
+  onPersisted(): void;
+};
 
 export interface SessionLifecycleOptions<TResume, TCtx> {
   /** Log prefix, e.g. 'SessionManager'. */
@@ -165,5 +169,10 @@ export interface ConversationSessionLifecycle extends SessionLifecycle {
   providerSessionId(key: string, input: ReportProviderSessionIdInput): void;
   /** Re-persist the active intent from activePayload. */
   saveIntent(key: string): void;
+  /** Prepare and commit an intent within the same FIFO slot, before later background writes. */
+  persistIntent(
+    key: string,
+    prepare?: () => SessionIntentUpdate | null
+  ): Promise<Result<void, SessionIntentError>>;
   reconcile(): Promise<void>;
 }

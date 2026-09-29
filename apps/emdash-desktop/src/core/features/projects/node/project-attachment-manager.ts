@@ -28,7 +28,6 @@ import {
   runtimeRecoveryDisposition,
   type HostAvailability,
   type HostAvailabilityState,
-  type HostDemandMode,
 } from '@core/services/hosts/api/availability';
 import { fsErrorMessage } from '@core/services/runtime-broker/node/files';
 
@@ -270,6 +269,10 @@ export class ProjectAttachmentManagerService implements ProjectAttachmentManager
       project = await this.options.adapter.loadProject(entry.projectId);
     } catch (error) {
       if (this.entries.get(entry.projectId) !== entry) return;
+      log.error('ProjectAttachmentManager: failed to load Project record', {
+        projectId: entry.projectId,
+        error,
+      });
       entry.state.set({
         kind: 'absent',
         lastFailure: {
@@ -299,23 +302,24 @@ export class ProjectAttachmentManagerService implements ProjectAttachmentManager
     const hostScope = entry.scope.child('host');
     entry.hostScope = hostScope;
     let availabilityState = this.options.availability.stateFor(host);
-    const demand = this.options.availability.demand(
-      host,
-      projectDemandMode(peek(entry.state), availabilityState),
-      hostScope
-    );
-    observe(
-      entry.state,
-      ({ value }) => {
-        demand.setMode(projectDemandMode(value, availabilityState));
-      },
-      { scope: hostScope, immediate: true }
-    );
+    let connectionLease: Scope | undefined;
+    const updateLease = () => {
+      if (shouldLeaseHost(peek(entry.state), availabilityState)) {
+        if (connectionLease || hostScope.disposed) return;
+        connectionLease = hostScope.child('connection-lease');
+        this.options.availability.lease(host, connectionLease);
+      } else {
+        const released = connectionLease;
+        connectionLease = undefined;
+        void released?.dispose();
+      }
+    };
+    observe(entry.state, () => updateLease(), { scope: hostScope, immediate: true });
     observe(
       this.options.availability.state(host),
       ({ value }) => {
         availabilityState = value;
-        demand.setMode(projectDemandMode(peek(entry.state), value));
+        updateLease();
         if (value.kind === 'ready') {
           this.startAttempt(entry, value.generation);
         } else if (entry.attempt) {
@@ -453,6 +457,11 @@ export class ProjectAttachmentManagerService implements ProjectAttachmentManager
     failure: ProjectAttachmentError
   ): void {
     if (entry.attempt !== attempt) return;
+    log.error('ProjectAttachmentManager: failed to attach Project', {
+      projectId: entry.projectId,
+      hostGeneration: attempt.hostGeneration,
+      error: failure,
+    });
     entry.attempt = undefined;
     entry.state.set({
       kind: 'absent',
@@ -569,14 +578,14 @@ function isAutomaticallyEligibleFailure(failure: ProjectAttachmentError): boolea
   return isRuntimeResolveError(failure) && runtimeRecoveryDisposition(failure) === 'eligible';
 }
 
-function projectDemandMode(
+function shouldLeaseHost(
   attachment: ProjectAttachmentState,
   availability: HostAvailabilityState
-): HostDemandMode {
-  if (attachment.kind === 'attached' || attachment.kind === 'attaching') return 'automatic';
+): boolean {
+  if (attachment.kind === 'attached' || attachment.kind === 'attaching') return true;
   if (attachment.lastFailure && !isAutomaticallyEligibleFailure(attachment.lastFailure)) {
-    return 'passive';
+    return false;
   }
-  if (!allowsAutomaticHostRecovery(availability)) return 'passive';
-  return 'automatic';
+  if (!allowsAutomaticHostRecovery(availability)) return false;
+  return true;
 }

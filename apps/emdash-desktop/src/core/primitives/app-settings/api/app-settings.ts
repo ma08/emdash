@@ -1,4 +1,3 @@
-import type { SessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import type { TerminalShellId } from '@emdash/core/primitives/terminal-shell/api';
 import type { BrowserProfile, BrowserProfileSelection } from '@core/primitives/browser/api';
 import type { OpenInAppId } from '@core/primitives/open-in-apps/api/open-in-apps';
@@ -12,9 +11,7 @@ export type ProjectSettings = {
   pushOnCreate: boolean;
   branchPrefix: string;
   appendRandomBranchSuffix: boolean;
-  /** Persistent sessions on by default; the multiplexer below chooses tmux or zellij. */
   tmuxByDefault: boolean;
-  multiplexer: SessionMultiplexer;
 };
 
 export type NotificationSettings = {
@@ -27,7 +24,6 @@ export type NotificationSettings = {
 
 export type TaskSettings = {
   autoGenerateName: boolean;
-  autoApproveByDefault: boolean;
   autoTrustWorktrees: boolean;
   createBranchAndWorktree: boolean;
   deleteBranchByDefault: boolean;
@@ -52,6 +48,7 @@ export type TerminalSettings = {
 export type Theme = 'emlight' | 'emdark' | null;
 
 export type InterfaceSettings = {
+  showTrayIcon: boolean;
   taskHoverAction: 'delete' | 'archive';
   autoRightSidebarBehavior: boolean;
   showLeftSidebarLineChanges: boolean;

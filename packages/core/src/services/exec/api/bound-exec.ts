@@ -149,10 +149,6 @@ class ProcessBoundExec implements BoundExec {
         cleanup();
         reject(error);
       };
-      const failExec = (exitCode: number | null, stderrOverride?: string): void => {
-        fail(new ExecError(this.file, args, exitCode, stdoutText(), stderrOverride ?? stderr));
-      };
-
       const startTermination = (error?: Error): void => {
         if (settled) return;
         terminationError ??= error;
@@ -228,7 +224,7 @@ class ProcessBoundExec implements BoundExec {
           fail(error);
           return;
         }
-        failExec(null, error instanceof Error ? error.message : String(error));
+        fail(new ExecError(this.file, args, null, stdoutText(), error.message, { cause: error }));
       });
 
       child.on('close', async (code) => {

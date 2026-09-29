@@ -44,6 +44,21 @@ function makeHarness() {
 }
 
 describe('ConversationHydrationReconciler', () => {
+  it('reconciles an explicit activation after a previously hydrated process is lost', async () => {
+    const { reconciler, hydrateConversation } = makeHarness();
+    reconciler.sync(['conversation-1']);
+    await Promise.resolve();
+    const resume = deferred();
+    hydrateConversation.mockReturnValueOnce(resume.promise);
+    reconciler.retry('conversation-1');
+    reconciler.retry('conversation-1');
+    expect(hydrateConversation).toHaveBeenCalledTimes(2);
+    resume.resolve();
+    await resume.promise;
+    reconciler.sync(['conversation-1']);
+    expect(hydrateConversation).toHaveBeenCalledTimes(2);
+  });
+
   it('hydrates desired conversations', async () => {
     const { reconciler, hydrateConversation } = makeHarness();
 

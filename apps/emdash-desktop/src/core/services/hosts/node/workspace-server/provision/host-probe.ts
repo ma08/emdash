@@ -11,28 +11,30 @@ const probeOptions = {
 } as const;
 
 export class RemoteHostProbe {
-  private readonly cache = new Map<string, Promise<RemoteHostInfo>>();
+  private cached: Promise<RemoteHostInfo> | undefined;
 
-  constructor(private readonly ssh: WorkspaceServerSshPort) {}
+  constructor(
+    private readonly connectionId: string,
+    private readonly ssh: WorkspaceServerSshPort
+  ) {}
 
-  probe(connectionId: string, signal?: AbortSignal): Promise<RemoteHostInfo> {
-    const cached = this.cache.get(connectionId);
-    if (cached) return cached;
+  probe(signal?: AbortSignal): Promise<RemoteHostInfo> {
+    if (this.cached) return this.cached;
 
-    const pending = this.probeUncached(connectionId, signal).catch((error: unknown) => {
-      if (this.cache.get(connectionId) === pending) this.cache.delete(connectionId);
+    const pending = this.probeUncached(signal).catch((error: unknown) => {
+      if (this.cached === pending) this.cached = undefined;
       throw error;
     });
-    this.cache.set(connectionId, pending);
+    this.cached = pending;
     return pending;
   }
 
-  drop(connectionId: string): void {
-    this.cache.delete(connectionId);
+  drop(): void {
+    this.cached = undefined;
   }
 
-  private async probeUncached(connectionId: string, signal?: AbortSignal): Promise<RemoteHostInfo> {
-    const proxy = await this.ssh.ensureProxy(connectionId);
+  private async probeUncached(signal?: AbortSignal): Promise<RemoteHostInfo> {
+    const proxy = await this.ssh.ensureProxy(this.connectionId);
     const platform = await proxy.exec(
       { command: 'uname', args: ['-s'] },
       { ...probeOptions, signal }

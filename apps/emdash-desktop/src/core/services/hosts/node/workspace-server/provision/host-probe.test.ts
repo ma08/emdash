@@ -1,3 +1,4 @@
+import { deferred } from '@emdash/shared/testing';
 import { describe, expect, it, vi } from 'vitest';
 import type { SshClientProxy } from '@core/primitives/ssh/api/node/ssh-client-proxy';
 import { RemoteHostProbe } from './host-probe';
@@ -16,18 +17,19 @@ describe('RemoteHostProbe', () => {
       'exec' | 'execScript'
     > as SshClientProxy;
     const ensureProxy = vi.fn(async () => proxy);
-    const probe = new RemoteHostProbe({ ensureProxy });
+    const probe = new RemoteHostProbe('ssh-1', { ensureProxy });
 
-    await expect(probe.probe('ssh-1')).resolves.toEqual({
+    await expect(probe.probe()).resolves.toEqual({
       platform: 'posix',
       home: '/home/devuser',
     });
-    await probe.probe('ssh-1');
+    await probe.probe();
+    expect(ensureProxy).toHaveBeenCalledWith('ssh-1');
     expect(exec).toHaveBeenCalledOnce();
     expect(execScript).toHaveBeenCalledOnce();
 
-    probe.drop('ssh-1');
-    await probe.probe('ssh-1');
+    probe.drop();
+    await probe.probe();
     expect(exec).toHaveBeenCalledTimes(2);
     expect(execScript).toHaveBeenCalledTimes(2);
   });
@@ -46,9 +48,9 @@ describe('RemoteHostProbe', () => {
       SshClientProxy,
       'exec' | 'execScript'
     > as SshClientProxy;
-    const probe = new RemoteHostProbe({ ensureProxy: vi.fn(async () => proxy) });
+    const probe = new RemoteHostProbe('ssh-1', { ensureProxy: vi.fn(async () => proxy) });
 
-    await expect(probe.probe('ssh-windows')).resolves.toEqual({ platform: 'win32' });
+    await expect(probe.probe()).resolves.toEqual({ platform: 'win32' });
     expect(exec).toHaveBeenNthCalledWith(
       1,
       { command: 'uname', args: ['-s'] },
@@ -72,9 +74,9 @@ describe('RemoteHostProbe', () => {
       SshClientProxy,
       'exec' | 'execScript'
     > as SshClientProxy;
-    const probe = new RemoteHostProbe({ ensureProxy: vi.fn(async () => proxy) });
+    const probe = new RemoteHostProbe('ssh-1', { ensureProxy: vi.fn(async () => proxy) });
 
-    await expect(probe.probe('ssh-mingw')).resolves.toEqual({ platform: 'win32' });
+    await expect(probe.probe()).resolves.toEqual({ platform: 'win32' });
     expect(execScript).not.toHaveBeenCalled();
   });
 
@@ -88,11 +90,30 @@ describe('RemoteHostProbe', () => {
       SshClientProxy,
       'exec' | 'execScript'
     > as SshClientProxy;
-    const probe = new RemoteHostProbe({ ensureProxy: vi.fn(async () => proxy) });
+    const probe = new RemoteHostProbe('ssh-1', { ensureProxy: vi.fn(async () => proxy) });
 
-    await expect(probe.probe('ssh-unknown')).rejects.toThrow(
-      'Remote platform probe failed: uname: not found'
-    );
+    await expect(probe.probe()).rejects.toThrow('Remote platform probe failed: uname: not found');
     expect(execScript).not.toHaveBeenCalled();
+  });
+
+  it('keeps the replacement probe cached when a dropped probe fails late', async () => {
+    const first = deferred<SshClientProxy>();
+    const proxy = {
+      exec: vi.fn(async () => ({ stdout: 'Linux', stderr: '', exitCode: 0 })),
+      execScript: vi.fn(async () => ({ stdout: '/home/replacement', stderr: '', exitCode: 0 })),
+    } as unknown as SshClientProxy;
+    const ensureProxy = vi.fn(async () => proxy).mockImplementationOnce(() => first.promise);
+    const probe = new RemoteHostProbe('ssh-1', { ensureProxy });
+    const stale = probe.probe();
+    const rejected = expect(stale).rejects.toThrow('old connection closed');
+    probe.drop();
+    const replacement = probe.probe();
+    await replacement;
+
+    first.reject(new Error('old connection closed'));
+    await rejected;
+
+    expect(probe.probe()).toBe(replacement);
+    expect(ensureProxy).toHaveBeenCalledTimes(2);
   });
 });

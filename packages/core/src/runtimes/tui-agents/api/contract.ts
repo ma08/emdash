@@ -21,7 +21,7 @@ export const tuiAgentsContract = defineContract({
    * If the process is already running or another launch won the race, this call
    * returns `attached` without replacing the active config.
    */
-  start: fallible({
+  startSession: fallible({
     input: tuiAgentStartInputSchema,
     data: z.object({ outcome: tuiStartOutcomeSchema }),
     error: tuiStartErrorSchema,
@@ -42,9 +42,8 @@ export const tuiAgentsContract = defineContract({
   }),
 
   /**
-   * Terminates the process; the persisted active intent survives, so the session
-   * auto-resumes across daemon restarts. Retained output and last session state remain
-   * available.
+   * Terminates the process and marks its intent suspended. Retained output and
+   * last session state remain available until an explicit activation resumes it.
    */
   stop: fallible({
     input: conv,

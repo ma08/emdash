@@ -138,8 +138,7 @@ describe('SETTINGS_SEARCH_INDEX integrity', () => {
     const rowBackedIds = [
       'privacy-telemetry',
       'auto-generate-task-names',
-      'enable-persistent-sessions',
-      'session-multiplexer',
+      'enable-tmux',
       'terminal-font-size',
       'notifications',
       'os-notifications',

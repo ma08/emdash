@@ -1,12 +1,11 @@
-import type { SessionMultiplexer } from '@emdash/core/primitives/session-multiplexer/api';
 import type { Result } from '@emdash/shared';
 import type {
   PlacementContext,
   Resolved,
   StoredProjectGitSettings,
+  StoredIntegrationAccounts,
 } from '@core/primitives/project-settings/api';
 import type { UpdateProjectSettingsError } from '@core/primitives/projects/api';
-import type { ProjectSettingsDomainPatch } from '../../project-settings-page';
 
 export type StoredPlacementSettings = {
   tmux?: boolean;
@@ -20,6 +19,7 @@ export interface ProjectSettingsProvider {
    * facts — never from local fallbacks.
    */
   getStoredGitSettings(): Promise<StoredProjectGitSettings>;
+  getStoredIntegrationAccounts(): Promise<StoredIntegrationAccounts>;
   /**
    * The host/app placement layers below per-project overrides: worktree-root
    * defaults plus the host home, and host/app tmux defaults. Shipped to the
@@ -30,10 +30,6 @@ export interface ProjectSettingsProvider {
   getStoredPlacementSettings(): Promise<StoredPlacementSettings>;
   /** Effective tmux value from the shared project > host > app resolver. */
   resolveTmux(): Promise<Resolved<boolean>>;
-  /** Effective multiplexer behind persistent sessions, from the host > app resolver. */
-  resolveMultiplexer(): Promise<Resolved<SessionMultiplexer>>;
-  patch(
-    patch: Pick<ProjectSettingsDomainPatch, 'gitIdentity' | 'placement'>
-  ): Promise<Result<void, UpdateProjectSettingsError>>;
+  setWorktreeRoot(worktreeRoot: string | null): Promise<Result<void, UpdateProjectSettingsError>>;
   ensure(): Promise<void>;
 }

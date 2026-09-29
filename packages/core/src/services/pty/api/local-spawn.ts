@@ -1,8 +1,12 @@
 import { getWindowsEnvValue } from '#primitives/agent-env/api';
-import { formatCommandLine, quoteArg, type NativeInvocation } from '#primitives/exec/api';
-import { planExecutableLaunch, type FileExists } from '#primitives/exec/node';
-import { buildTmuxShellLine } from './tmux';
-import { buildZellijShellLine } from './zellij';
+import {
+  formatCommandLine,
+  quoteArg,
+  type CommandSpec,
+  type NativeInvocation,
+} from '#primitives/exec/api';
+import { planExecutableLaunch, planShellLaunch, type FileExists } from '#primitives/exec/node';
+import { buildTmuxShellLine } from './tmux-commands';
 
 export type ResolvedPtyShellProfile = {
   id: string;
@@ -18,30 +22,24 @@ export type ResolvedPtyShellProfile = {
   remotePathLookup?: boolean;
 };
 
-export type PtyCommandSpec =
-  | { kind: 'argv'; command: string; args: string[] }
-  | { kind: 'shell-line'; commandLine: string };
-
 export type PtySpawnIntent =
   | {
       kind: 'interactive-shell';
       cwd: string;
       shellProfile?: ResolvedPtyShellProfile;
       shellSetup?: string;
-      tmuxSessionName?: string;
-      zellijSessionName?: string;
+      tmux?: { name: string; identity?: string };
     }
   | {
       kind: 'run-command';
       cwd: string;
-      command: PtyCommandSpec;
+      command: CommandSpec;
       shellProfile?: ResolvedPtyShellProfile;
       shellSetup?: string;
-      tmuxSessionName?: string;
-      zellijSessionName?: string;
+      tmux?: { name: string; identity?: string };
     };
 
-export type LocalPtySpawnWarning = 'tmux_unsupported_on_windows' | 'zellij_unsupported_on_windows';
+export type LocalPtySpawnWarning = 'tmux_unsupported_on_windows';
 
 export type ResolvedLocalPtySpawn = {
   invocation: NativeInvocation;
@@ -109,36 +107,8 @@ function wrapCmdExeCommandLine(commandLine: string): string {
 
 function windowsWarnings(intent: PtySpawnIntent): LocalPtySpawnWarning[] {
   const warnings: LocalPtySpawnWarning[] = [];
-  if (intent.tmuxSessionName) warnings.push('tmux_unsupported_on_windows');
-  if (intent.zellijSessionName) warnings.push('zellij_unsupported_on_windows');
+  if (intent.tmux) warnings.push('tmux_unsupported_on_windows');
   return warnings;
-}
-
-function hasMultiplexer(intent: PtySpawnIntent): boolean {
-  return Boolean(intent.tmuxSessionName || intent.zellijSessionName);
-}
-
-/**
- * Wraps `commandLine` in the persistent-session multiplexer the intent asks
- * for. tmux takes precedence should both names be present. The zellij pane
- * runs the command through the resolved shell so no extra `/bin/sh` hop sits
- * between the multiplexer and a TUI agent.
- */
-function multiplexerShellLine(
-  intent: PtySpawnIntent,
-  commandLine: string,
-  shell: string,
-  commandArgs: readonly string[]
-): string | null {
-  if (intent.tmuxSessionName) return buildTmuxShellLine(intent.tmuxSessionName, commandLine);
-  if (intent.zellijSessionName) {
-    return buildZellijShellLine(intent.zellijSessionName, commandLine, intent.cwd, {
-      shell,
-      shellArgs: commandArgs,
-      outerShellFamily: intent.shellProfile?.family === 'csh' ? 'csh' : 'posix',
-    });
-  }
-  return null;
 }
 
 function combineShellSetup(
@@ -164,13 +134,8 @@ function windowsShellLineSpawn({
   shellProfile: PtySpawnIntent['shellProfile'];
   warnings: LocalPtySpawnWarning[];
 }): ResolvedLocalPtySpawn {
-  const shell = shellProfile?.executable ?? getWindowsShell(env);
-  const commandArgs = shellProfile?.commandArgs ?? ['/d', '/s', '/c'];
   return {
-    invocation:
-      shellProfile?.family === 'powershell' || shellProfile?.family === 'wsl'
-        ? argvInvocation(shell, [...commandArgs, commandLine])
-        : windowsCommandLineInvocation(shell, commandArgs, commandLine),
+    invocation: planShellLaunch({ platform: 'win32', commandLine, env, shellProfile }),
     cwd,
     warnings,
   };
@@ -280,14 +245,14 @@ function resolvePosixSpawn(
   const setupWrapperArgs = getSetupWrapperArgs(intent);
 
   if (intent.kind === 'interactive-shell') {
-    if (hasMultiplexer(intent)) {
+    if (intent.tmux) {
       const commandLine = intent.shellSetup
         ? `${intent.shellSetup} && exec ${quoteArg(shell, 'posix')} ${interactiveArgs.join(' ')}`
         : `exec ${quoteArg(shell, 'posix')} ${interactiveArgs.join(' ')}`;
       return {
         invocation: argvInvocation(shell, [
           ...(intent.shellSetup ? setupWrapperArgs : commandArgs),
-          multiplexerShellLine(intent, commandLine, shell, commandArgs) ?? commandLine,
+          buildTmuxShellLine(intent.tmux.name, commandLine, intent.tmux.identity),
         ]),
         cwd: intent.cwd,
         warnings: [],
@@ -322,7 +287,7 @@ function resolvePosixSpawn(
     );
   }
 
-  if (intent.command.kind === 'argv' && !intent.shellSetup && !hasMultiplexer(intent)) {
+  if (intent.command.kind === 'argv' && !intent.shellSetup && !intent.tmux) {
     const plan = planExecutableLaunch({
       platform,
       command: intent.command.command,
@@ -341,17 +306,28 @@ function resolvePosixSpawn(
     ? `${intent.shellSetup} && ${commandLine}`
     : commandLine;
 
-  const multiplexed = multiplexerShellLine(intent, fullCommandLine, shell, commandArgs);
-  if (multiplexed) {
+  if (intent.tmux) {
     return {
-      invocation: argvInvocation(shell, [...commandArgs, multiplexed]),
+      invocation: argvInvocation(shell, [
+        ...commandArgs,
+        buildTmuxShellLine(intent.tmux.name, fullCommandLine, intent.tmux.identity),
+      ]),
       cwd: intent.cwd,
       warnings: [],
     };
   }
 
   return {
-    invocation: argvInvocation(shell, [...commandArgs, fullCommandLine]),
+    invocation: planShellLaunch({
+      platform,
+      commandLine: fullCommandLine,
+      env,
+      shellProfile: {
+        executable: shell,
+        family: intent.shellProfile?.family ?? 'posix',
+        commandArgs,
+      },
+    }),
     cwd: intent.cwd,
     warnings: [],
   };
